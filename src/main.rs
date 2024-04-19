@@ -2,7 +2,7 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::{
@@ -23,7 +23,7 @@ use esp_hal::{
 use esp_println::println;
 use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
-use lora_phy::sx1261_2::{self, Sx126xVariant, TcxoCtrlVoltage, SX1261_2};
+use lora_phy::sx126x::{self, Sx126x, Sx126xVariant, TcxoCtrlVoltage};
 use lora_phy::LoRa;
 use lorawan_device::{async_device::JoinResponse, default_crypto::DefaultFactory as Crypto};
 use lorawan_device::{
@@ -73,14 +73,15 @@ async fn main(_spawner: Spawner) {
     let spi = ExclusiveDevice::new(&mut spi_bus, nss, Delay);
 
     // Configure Sx1262 chip
-    let config = sx1261_2::Config {
+    let config = sx126x::Config {
         chip: Sx126xVariant::Sx1262,
         tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V7),
         use_dcdc: false,
         use_dio2_as_rfswitch: true,
+        rx_boost: false,
     };
     let iv = GenericSx126xInterfaceVariant::new(reset, dio1, busy, None, None).unwrap();
-    let lora = LoRa::new(SX1261_2::new(spi, iv, config), true, Delay)
+    let lora = LoRa::new(Sx126x::new(spi, iv, config), true, Delay)
         .await
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();

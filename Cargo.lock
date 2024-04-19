@@ -777,6 +777,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -835,15 +841,15 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 [[package]]
 name = "lora-modulation"
 version = "0.1.4"
-source = "git+https://github.com/lora-rs/lora-rs.git?tag=lorawan-v0.8.0#458214b2553ef2540afc4c0978c6d0979509f648"
+source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "defmt",
 ]
 
 [[package]]
 name = "lora-phy"
-version = "3.0.0-alpha.3"
-source = "git+https://github.com/lora-rs/lora-rs.git?tag=lorawan-v0.8.0#458214b2553ef2540afc4c0978c6d0979509f648"
+version = "3.0.0-alpha.4"
+source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "defmt",
  "embedded-hal 1.0.0",
@@ -856,18 +862,19 @@ dependencies = [
 [[package]]
 name = "lorawan"
 version = "0.8.0"
-source = "git+https://github.com/lora-rs/lora-rs.git?tag=lorawan-v0.8.0#458214b2553ef2540afc4c0978c6d0979509f648"
+source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "aes",
  "cmac",
  "defmt",
  "generic-array",
+ "hex",
 ]
 
 [[package]]
 name = "lorawan-device"
 version = "0.12.0"
-source = "git+https://github.com/lora-rs/lora-rs.git?tag=lorawan-v0.8.0#458214b2553ef2540afc4c0978c6d0979509f648"
+source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "defmt",
  "document-features",
@@ -1082,7 +1089,6 @@ dependencies = [
  "esp-println",
  "fugit",
  "lora-phy",
- "lorawan",
  "lorawan-device",
 ]
 

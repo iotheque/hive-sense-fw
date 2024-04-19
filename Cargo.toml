@@ -24,9 +24,8 @@ esp-hal = { version = "0.16.1", features = [
 ] }
 esp-println = { version = "0.9.0", features = ["esp32c3", "log", "defmt-espflash"] }
 
-lora-phy = { git = "https://github.com/lora-rs/lora-rs.git", tag="lorawan-v0.8.0", features = ["lorawan-radio"]}
-lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", tag="lorawan-v0.8.0", default-features = false, features = ["embassy-time", "default-crypto", "defmt"]}
-lorawan = { git = "https://github.com/lora-rs/lora-rs.git", tag="lorawan-v0.8.0", default-features = false, features = ["default-crypto", "defmt"]}
+lora-phy = { git = "https://github.com/pcurt/lora-rs.git", branch="feat/radio-low-power", features = ["lorawan-radio"]}
+lorawan-device = { git = "https://github.com/pcurt/lora-rs.git", branch="feat/radio-low-power", default-features = false, features = ["embassy-time", "default-crypto", "defmt"]}
 embassy-executor =  { version = "0.5.0" }
 embassy-time =  { version = "0.3.0" }
 embassy-time-driver = { version = "0.1.0" }
