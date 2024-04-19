@@ -23,7 +23,7 @@ use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx1261_2::{self, Sx126xVariant, TcxoCtrlVoltage, SX1261_2};
 use lora_phy::LoRa;
-use lorawan_device::default_crypto::DefaultFactory as Crypto;
+use lorawan_device::{async_device::JoinResponse, default_crypto::DefaultFactory as Crypto};
 use lorawan_device::{
     async_device::{region, Device, EmbassyTimer, JoinMode},
     AppEui, AppKey, DevEui,
@@ -90,7 +90,7 @@ async fn main(_spawner: Spawner) -> ! {
         Rng::new(peripherals.RNG),
     );
 
-    // Send a join request
+    // Join to Lora Network
     let resp = device
         .join(&JoinMode::OTAA {
             deveui: DevEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
@@ -100,17 +100,14 @@ async fn main(_spawner: Spawner) -> ! {
                 0x00, 0x00,
             ]),
         })
-        .await
-        .unwrap();
-    esp_println::println!("LoRaWAN network joined status: {:?}", resp);
-
-    // Send a test data
-    let data_test: [u8; 5] = [1, 2, 3, 4, 5];
-    let resp = device.send(&data_test, 1, true).await.unwrap();
-    esp_println::println!("Send data status: {:?}", resp);
-
-    loop {
-        esp_println::println!("Loop...");
-        Timer::after(Duration::from_millis(1_000)).await;
+        .await;
+    if let Ok(JoinResponse::JoinSuccess) = resp {
+        esp_println::println!("LoRaWAN network joined, send message");
+        let data_test: [u8; 5] = [1, 2, 3, 4, 5];
+        let send_status = device.send(&data_test, 1, true).await.unwrap();
+        esp_println::println!("Send data status: {:?}", send_status);
+    } else {
+        esp_println::println!("CAN NOT join LoRaWAN network");
     }
+
 }
