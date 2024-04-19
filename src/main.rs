@@ -12,13 +12,15 @@ use esp_hal::{
     gpio::{self, IO},
     peripherals::Peripherals,
     prelude::*,
+    rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, SocResetReason},
     spi::{
         master::{prelude::*, Spi},
         SpiMode,
     },
     timer::TimerGroup,
-    Rng,
+    Cpu, Rng, Rtc,
 };
+use esp_println::println;
 use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx1261_2::{self, Sx126xVariant, TcxoCtrlVoltage, SX1261_2};
@@ -29,12 +31,17 @@ use lorawan_device::{
     AppEui, AppKey, DevEui,
 };
 
-// warning: set these appropriately for the region
 const LORAWAN_REGION: region::Region = region::Region::EU868;
-const MAX_TX_POWER: u8 = 0;
+const MAX_TX_POWER: u8 = 14;
 
 #[main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) {
+    // Print wake or reset reason
+    let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
+    println!("reset reason: {:?}", reason);
+    let wake_reason = get_wakeup_cause();
+    println!("wake reason: {:?}", wake_reason);
+
     // Configure peripherals
     let peripherals = Peripherals::take();
     let system = peripherals.SYSTEM.split();
@@ -56,12 +63,7 @@ async fn main(_spawner: Spawner) -> ! {
     let busy = io.pins.gpio4.into_pull_down_input().degrade();
 
     let mut spi_bus = Spi::new(peripherals.SPI2, 200u32.kHz(), SpiMode::Mode0, &clocks)
-        .with_pins(
-            Some(sclk),
-            Some(mosi),
-            Some(miso),
-            gpio::NO_PIN,
-        )
+        .with_pins(Some(sclk), Some(mosi), Some(miso), gpio::NO_PIN)
         .with_dma(dma_channel.configure(
             false,
             &mut descriptors,
@@ -102,12 +104,21 @@ async fn main(_spawner: Spawner) -> ! {
         })
         .await;
     if let Ok(JoinResponse::JoinSuccess) = resp {
-        esp_println::println!("LoRaWAN network joined, send message");
+        println!("LoRaWAN network joined, send message");
         let data_test: [u8; 5] = [1, 2, 3, 4, 5];
         let send_status = device.send(&data_test, 1, true).await.unwrap();
-        esp_println::println!("Send data status: {:?}", send_status);
+        println!("Send data status: {:?}", send_status);
     } else {
-        esp_println::println!("CAN NOT join LoRaWAN network");
+        println!("CAN NOT join LoRaWAN network");
     }
 
+    // Set device in sleep mode
+    if let Err(err) = device.enter_low_power().await {
+        println!("Error during sleep mode setup : {:?}", err);
+    }
+
+    println!("Go to immedialtely sleep");
+    let mut rtc = Rtc::new(peripherals.LPWR);
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
+    rtc.sleep_deep(&[&timer], &mut delay);
 }
