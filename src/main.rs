@@ -21,6 +21,7 @@ use esp_hal::{
     Cpu, Rng, Rtc,
 };
 use esp_println::println;
+use loadcell::{hx711, LoadCell};
 use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx126x::{self, Sx126x, Sx126xVariant, TcxoCtrlVoltage};
@@ -51,6 +52,7 @@ async fn main(_spawner: Spawner) {
     let dma = Dma::new(peripherals.DMA);
     let dma_channel = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
+    let mut delay = esp_hal::delay::Delay::new(&clocks);
 
     // Configure SPI
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
@@ -61,6 +63,17 @@ async fn main(_spawner: Spawner) {
     let reset = io.pins.gpio5.into_open_drain_output();
     let dio1 = io.pins.gpio3.into_pull_down_input().degrade();
     let busy = io.pins.gpio4.into_pull_down_input().degrade();
+
+    // HX711 Pins configuration
+    let hx711_dt = io.pins.gpio21.into_floating_input();
+    let hx711_sck = io.pins.gpio20.into_push_pull_output();
+    let mut hx711_enable = io.pins.gpio0.into_push_pull_output();
+    let _ = hx711_enable.set_high();
+    // HX711 configuration
+    let mut load_sensor = hx711::HX711::new(hx711_sck, hx711_dt, delay);
+    //load_sensor.tare(16);
+    //set the sensitivity/scale
+    load_sensor.set_scale(1.0);
 
     let mut spi_bus = Spi::new(peripherals.SPI2, 200u32.kHz(), SpiMode::Mode0, &clocks)
         .with_pins(Some(sclk), Some(mosi), Some(miso), gpio::NO_PIN)
@@ -116,10 +129,13 @@ async fn main(_spawner: Spawner) {
     // Set device in sleep mode
     if let Err(err) = device.enter_low_power().await {
         println!("Error during sleep mode setup : {:?}", err);
-    }
 
-    println!("Go to immedialtely sleep");
-    let mut rtc = Rtc::new(peripherals.LPWR);
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
-    rtc.sleep_deep(&[&timer], &mut delay);
+    loop {
+        if load_sensor.is_ready() {
+            let reading = load_sensor.read_scaled();
+            println!("HX711 reading = {:?}", reading);
+        }
+        println!("loop");
+        delay.delay_ms(1000u32);
+    }
 }

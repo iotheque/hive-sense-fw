@@ -823,6 +823,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadcell"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f557632ac53bd4e463d7412e3b56ac8156babbae6929bdbd1785f53097aec627"
+dependencies = [
+ "critical-section",
+ "embedded-hal 0.2.7",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1088,6 +1098,7 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "fugit",
+ "loadcell",
  "lora-phy",
  "lorawan-device",
 ]
