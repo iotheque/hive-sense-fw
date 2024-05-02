@@ -14,13 +14,14 @@ esp-backtrace = { version = "0.11.0", features = [
     "defmt",
 ] }
 
-esp-hal = { version = "0.16.1", features = [
+esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", ref="68a4fb29ed163f01107c0560caf2cc94325a1608", features = [
+  "async",
   "esp32c3",
   "embassy",
   "embassy-time-timg0",
   "embassy-executor-thread",
   "embassy-integrated-timers",
-  "async",
+  "embedded-hal-02",
 ] }
 esp-println = { version = "0.9.0", features = ["esp32c3", "log", "defmt-espflash"] }
 

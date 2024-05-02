@@ -9,16 +9,18 @@ use esp_hal::{
     clock::ClockControl,
     dma::*,
     dma_descriptors, embassy,
-    gpio::{self, IO},
+    gpio::{self, Io},
     peripherals::Peripherals,
     prelude::*,
-    rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, SocResetReason},
+    rng::Rng,
+    rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, Rtc, SocResetReason},
     spi::{
         master::{prelude::*, Spi},
         SpiMode,
     },
-    timer::TimerGroup,
-    Cpu, Rng, Rtc,
+    system::SystemControl,
+    timer::timg::TimerGroup,
+    Cpu,
 };
 use esp_println::println;
 use loadcell::{hx711, LoadCell};
@@ -37,25 +39,31 @@ const MAX_TX_POWER: u8 = 14;
 
 #[main]
 async fn main(_spawner: Spawner) {
-    // Print wake or reset reason
-    let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
-    println!("reset reason: {:?}", reason);
-    let wake_reason = get_wakeup_cause();
-    println!("wake reason: {:?}", wake_reason);
-
     // Configure peripherals
     let peripherals = Peripherals::take();
-    let system = peripherals.SYSTEM.split();
+    let system = SystemControl::new(peripherals.SYSTEM);
     let clocks = ClockControl::max(system.clock_control).freeze();
-    let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks);
+    let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
+    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    let mut rtc = Rtc::new(peripherals.LPWR, None);
+    let rng = Rng::new(peripherals.RNG);
     embassy::init(&clocks, timg0);
     let dma = Dma::new(peripherals.DMA);
     let dma_channel = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
+
+    // FIXME: remove it, it is used no see logs after power on (time to open serial port)
     let mut delay = esp_hal::delay::Delay::new(&clocks);
+    delay.delay_millis(10000u32);
+
+    println!("SW version 1.0.0");
+    // Print wake or reset reason
+    let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
+    println!("Reset reason: {:?}", reason);
+    let wake_reason = get_wakeup_cause();
+    println!("Wake reason: {:?}", wake_reason);
 
     // Configure SPI
-    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let sclk = io.pins.gpio10;
     let miso = io.pins.gpio6;
     let mosi = io.pins.gpio7;
@@ -66,7 +74,7 @@ async fn main(_spawner: Spawner) {
 
     // HX711 Pins configuration
     let hx711_dt = io.pins.gpio21.into_floating_input();
-    let hx711_sck = io.pins.gpio20.into_push_pull_output();
+    let hx711_sck = io.pins.gpio20.into_open_drain_output();
     let mut hx711_enable = io.pins.gpio0.into_push_pull_output();
     let _ = hx711_enable.set_high();
     // HX711 configuration
@@ -77,7 +85,7 @@ async fn main(_spawner: Spawner) {
 
     let mut spi_bus = Spi::new(peripherals.SPI2, 200u32.kHz(), SpiMode::Mode0, &clocks)
         .with_pins(Some(sclk), Some(mosi), Some(miso), gpio::NO_PIN)
-        .with_dma(dma_channel.configure(
+        .with_dma(dma_channel.configure_for_async(
             false,
             &mut descriptors,
             &mut rx_descriptors,
@@ -99,12 +107,23 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();
     let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
-    let mut device: Device<_, Crypto, _, _> = Device::new(
-        region,
-        radio,
-        EmbassyTimer::new(),
-        Rng::new(peripherals.RNG),
-    );
+    let mut device: Device<_, Crypto, _, _> = Device::new(region, radio, EmbassyTimer::new(), rng);
+
+    // Get HX711 data
+    let mut hx711_value: [u8; 1] = [0];
+    // Wait HX711 to be ready
+    for _ in 1..=5 {
+        if load_sensor.is_ready() {
+            let reading = load_sensor.read_scaled();
+            match reading {
+                Ok(x) => hx711_value[0] = x as u8,
+                Err(_) => println!("Error reading HX711"),
+            }
+            println!("HX711 reading = {:?}", reading);
+            break;
+        }
+        delay.delay_millis(100u32);
+    }
 
     // Join to Lora Network
     let resp = device
@@ -119,23 +138,15 @@ async fn main(_spawner: Spawner) {
         .await;
     if let Ok(JoinResponse::JoinSuccess) = resp {
         println!("LoRaWAN network joined, send message");
-        let data_test: [u8; 5] = [1, 2, 3, 4, 5];
-        let send_status = device.send(&data_test, 1, true).await.unwrap();
+        let send_status = device.send(&hx711_value, 1, true).await.unwrap();
         println!("Send data status: {:?}", send_status);
     } else {
         println!("CAN NOT join LoRaWAN network");
     }
 
-    // Set device in sleep mode
-    if let Err(err) = device.enter_low_power().await {
-        println!("Error during sleep mode setup : {:?}", err);
-
-    loop {
-        if load_sensor.is_ready() {
-            let reading = load_sensor.read_scaled();
-            println!("HX711 reading = {:?}", reading);
-        }
-        println!("loop");
-        delay.delay_ms(1000u32);
-    }
+    delay.delay_millis(5000u32);
+    println!("Go to sleep");
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
+    delay.delay_millis(100u32);
+    rtc.sleep_deep(&[&timer], &mut delay);
 }
