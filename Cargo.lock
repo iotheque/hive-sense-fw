@@ -477,7 +477,7 @@ dependencies = [
 [[package]]
 name = "esp-build"
 version = "0.1.0"
-source = "git+https://github.com/esp-rs/esp-hal.git#68a4fb29ed163f01107c0560caf2cc94325a1608"
+source = "git+https://github.com/esp-rs/esp-hal.git?rev=68a4fb29ed163f01107c0560caf2cc94325a1608#68a4fb29ed163f01107c0560caf2cc94325a1608"
 dependencies = [
  "quote",
  "syn 2.0.60",
@@ -487,7 +487,7 @@ dependencies = [
 [[package]]
 name = "esp-hal"
 version = "0.17.0"
-source = "git+https://github.com/esp-rs/esp-hal.git#68a4fb29ed163f01107c0560caf2cc94325a1608"
+source = "git+https://github.com/esp-rs/esp-hal.git?rev=68a4fb29ed163f01107c0560caf2cc94325a1608#68a4fb29ed163f01107c0560caf2cc94325a1608"
 dependencies = [
  "basic-toml",
  "bitfield",
@@ -530,7 +530,7 @@ dependencies = [
 [[package]]
 name = "esp-hal-procmacros"
 version = "0.10.0"
-source = "git+https://github.com/esp-rs/esp-hal.git#68a4fb29ed163f01107c0560caf2cc94325a1608"
+source = "git+https://github.com/esp-rs/esp-hal.git?rev=68a4fb29ed163f01107c0560caf2cc94325a1608#68a4fb29ed163f01107c0560caf2cc94325a1608"
 dependencies = [
  "darling",
  "document-features",
@@ -545,7 +545,7 @@ dependencies = [
 [[package]]
 name = "esp-metadata"
 version = "0.1.0"
-source = "git+https://github.com/esp-rs/esp-hal.git#68a4fb29ed163f01107c0560caf2cc94325a1608"
+source = "git+https://github.com/esp-rs/esp-hal.git?rev=68a4fb29ed163f01107c0560caf2cc94325a1608#68a4fb29ed163f01107c0560caf2cc94325a1608"
 dependencies = [
  "basic-toml",
  "lazy_static",
@@ -567,7 +567,7 @@ dependencies = [
 [[package]]
 name = "esp-riscv-rt"
 version = "0.8.0"
-source = "git+https://github.com/esp-rs/esp-hal.git#68a4fb29ed163f01107c0560caf2cc94325a1608"
+source = "git+https://github.com/esp-rs/esp-hal.git?rev=68a4fb29ed163f01107c0560caf2cc94325a1608#68a4fb29ed163f01107c0560caf2cc94325a1608"
 dependencies = [
  "document-features",
  "riscv",
@@ -815,7 +815,7 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 [[package]]
 name = "lora-modulation"
 version = "0.1.4"
-source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#88f5ffbe40c35625aca29a253eb678606290108e"
+source = "git+https://github.com/pcurt/lora-rs.git?rev=0ffb792616fcd5d4d0733b216359bcea931003dd#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "defmt",
 ]
@@ -823,7 +823,7 @@ dependencies = [
 [[package]]
 name = "lora-phy"
 version = "3.0.0-alpha.4"
-source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#88f5ffbe40c35625aca29a253eb678606290108e"
+source = "git+https://github.com/pcurt/lora-rs.git?rev=0ffb792616fcd5d4d0733b216359bcea931003dd#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "defmt",
  "embedded-hal 1.0.0",
@@ -836,7 +836,7 @@ dependencies = [
 [[package]]
 name = "lorawan"
 version = "0.8.0"
-source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#88f5ffbe40c35625aca29a253eb678606290108e"
+source = "git+https://github.com/pcurt/lora-rs.git?rev=0ffb792616fcd5d4d0733b216359bcea931003dd#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "aes",
  "cmac",
@@ -848,7 +848,7 @@ dependencies = [
 [[package]]
 name = "lorawan-device"
 version = "0.12.0"
-source = "git+https://github.com/pcurt/lora-rs.git?branch=feat/radio-low-power#88f5ffbe40c35625aca29a253eb678606290108e"
+source = "git+https://github.com/pcurt/lora-rs.git?rev=0ffb792616fcd5d4d0733b216359bcea931003dd#0ffb792616fcd5d4d0733b216359bcea931003dd"
 dependencies = [
  "defmt",
  "document-features",

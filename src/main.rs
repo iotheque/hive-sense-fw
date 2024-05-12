@@ -28,14 +28,27 @@ use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx126x::{self, Sx126x, Sx126xVariant, TcxoCtrlVoltage};
 use lora_phy::LoRa;
-use lorawan_device::{async_device::JoinResponse, default_crypto::DefaultFactory as Crypto};
 use lorawan_device::{
     async_device::{region, Device, EmbassyTimer, JoinMode},
     AppEui, AppKey, DevEui,
 };
+use lorawan_device::{
+    async_device::{JoinResponse, SendResponse},
+    default_crypto::DefaultFactory as Crypto,
+    mac::Session,
+};
 
 const LORAWAN_REGION: region::Region = region::Region::EU868;
 const MAX_TX_POWER: u8 = 14;
+
+#[ram(rtc_fast)]
+static mut BOOT_CNT: u8 = 0;
+#[ram(rtc_fast)]
+static mut SEED: u32 = 0;
+#[ram(rtc_fast)]
+static mut IS_JOIN: bool = false;
+#[ram(rtc_fast)]
+static mut SAVED_SESSION: Option<Session> = None;
 
 #[main]
 async fn main(_spawner: Spawner) {
@@ -46,7 +59,7 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut rtc = Rtc::new(peripherals.LPWR, None);
-    let rng = Rng::new(peripherals.RNG);
+    let mut rng = Rng::new(peripherals.RNG);
     embassy::init(&clocks, timg0);
     let dma = Dma::new(peripherals.DMA);
     let dma_channel = dma.channel0;
@@ -62,6 +75,14 @@ async fn main(_spawner: Spawner) {
     println!("Reset reason: {:?}", reason);
     let wake_reason = get_wakeup_cause();
     println!("Wake reason: {:?}", wake_reason);
+
+    unsafe {
+        println!("BOOT_CNT {:x?}", BOOT_CNT);
+        BOOT_CNT += 1;
+        println!("IS_JOIN: {:?}", IS_JOIN);
+        println!("SAVED_SESSION: {:?}", SAVED_SESSION);
+        println!("SEED: {:x?}", SEED);
+    }
 
     // Configure SPI
     let sclk = io.pins.gpio10;
@@ -107,7 +128,6 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();
     let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
-    let mut device: Device<_, Crypto, _, _> = Device::new(region, radio, EmbassyTimer::new(), rng);
 
     // Get HX711 data
     let mut hx711_value: [u8; 1] = [0];
@@ -126,23 +146,88 @@ async fn main(_spawner: Spawner) {
         println!("Wait for HX711 available");
     }
 
-    // Join to Lora Network
-    let resp = device
-        .join(&JoinMode::OTAA {
-            deveui: DevEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-            appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-            appkey: AppKey::from([
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00,
-            ]),
-        })
-        .await;
-    if let Ok(JoinResponse::JoinSuccess) = resp {
-        println!("LoRaWAN network joined, send message");
-        let send_status = device.send(&hx711_value, 1, true).await.unwrap();
-        println!("Send data status: {:?}", send_status);
+    let mut is_join: bool = false;
+    unsafe {
+        if IS_JOIN {
+            is_join = true;
+        }
+    }
+    if !is_join {
+        println!("Ask to join lora network");
+        let seed = rng.random();
+        let mut device: Device<_, Crypto, _, _> =
+            Device::new_with_seed(region, radio, EmbassyTimer::new(), seed.into());
+        let resp = device
+            .join(&JoinMode::OTAA {
+                deveui: DevEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+                appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+                appkey: AppKey::from([
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00,
+                ]),
+            })
+            .await;
+        if let Ok(JoinResponse::JoinSuccess) = resp {
+            println!("LoRaWAN network joined");
+            let send_status = device
+                .send(&hx711_value, 1, false)
+                .await
+                .unwrap();
+            match send_status {
+                SendResponse::RxComplete => {
+                    println!("LoRaWAN send succes");
+                    // Save state in RTC RAM
+                    unsafe {
+                        SEED = seed;
+                        IS_JOIN = true;
+                        SAVED_SESSION = device.get_session().clone().cloned();
+                    }
+                }
+                _ => {
+                    println!("LoRaWAN send error, reset session");
+                    unsafe {
+                        IS_JOIN = false;
+                    }
+                }
+            }
+
+            delay.delay_millis(1000u32);
+        } else {
+            // Save state in RTC RAM
+            unsafe {
+                IS_JOIN = false;
+            }
+            println!("CAN NOT join LoRaWAN network");
+        }
     } else {
-        println!("CAN NOT join LoRaWAN network");
+        println!("We are already joined use saved session");
+        unsafe {
+            let seed: u32 = SEED;
+            if let Some(saved_session) = SAVED_SESSION.clone() {
+                let mut device: Device<_, Crypto, _, _> = Device::new_with_seed_and_session(
+                    region,
+                    radio,
+                    EmbassyTimer::new(),
+                    seed.into(),
+                    Some(saved_session),
+                );
+                let send_status = device
+                    .send(&hx711_value, 1, false)
+                    .await
+                    .unwrap();
+
+                match send_status {
+                    SendResponse::RxComplete => {
+                        println!("LoRaWAN send succes");
+                        SAVED_SESSION = device.get_session().clone().cloned();
+                    }
+                    _ => {
+                        println!("LoRaWAN send error, reset session");
+                        IS_JOIN = false;
+                    }
+                }
+            }
+        }
     }
 
     delay.delay_millis(5000u32);
