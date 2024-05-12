@@ -130,13 +130,19 @@ async fn main(_spawner: Spawner) {
     let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
 
     // Get HX711 data
-    let mut hx711_value: [u8; 1] = [0];
+    let mut hx711_value: [u8; 4] = [0, 0, 0, 0];
     // Wait HX711 to be ready
-    for _ in 1..=5 {
+    for _ in 1..=10 {
         if load_sensor.is_ready() {
             let reading = load_sensor.read_scaled();
             match reading {
-                Ok(x) => hx711_value[0] = x as u8,
+                Ok(x) => {
+                    let raw_value: u32 = x as u32;
+                    hx711_value[0] = ((raw_value >> 24) & 0xFF) as u8;
+                    hx711_value[1] = ((raw_value >> 16) & 0xFF) as u8;
+                    hx711_value[2] = ((raw_value >> 8) & 0xFF) as u8;
+                    hx711_value[3] = (raw_value & 0xFF) as u8;
+                },
                 Err(_) => println!("Error reading HX711"),
             }
             println!("HX711 reading = {:?}", reading);
