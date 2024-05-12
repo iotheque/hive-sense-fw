@@ -74,7 +74,7 @@ async fn main(_spawner: Spawner) {
 
     // HX711 Pins configuration
     let hx711_dt = io.pins.gpio21.into_floating_input();
-    let hx711_sck = io.pins.gpio20.into_open_drain_output();
+    let hx711_sck = io.pins.gpio20.into_push_pull_output();
     let mut hx711_enable = io.pins.gpio0.into_push_pull_output();
     let _ = hx711_enable.set_high();
     // HX711 configuration
@@ -123,6 +123,7 @@ async fn main(_spawner: Spawner) {
             break;
         }
         delay.delay_millis(100u32);
+        println!("Wait for HX711 available");
     }
 
     // Join to Lora Network
