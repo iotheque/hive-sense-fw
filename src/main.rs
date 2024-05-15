@@ -6,6 +6,7 @@ use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::{
+    analog::adc::{Adc, AdcConfig, Attenuation},
     clock::ClockControl,
     dma::*,
     dma_descriptors, embassy,
@@ -67,7 +68,7 @@ async fn main(_spawner: Spawner) {
 
     // FIXME: remove it, it is used no see logs after power on (time to open serial port)
     let mut delay = esp_hal::delay::Delay::new(&clocks);
-    delay.delay_millis(10000u32);
+    delay.delay_millis(1000u32);
 
     println!("SW version 1.0.0");
     // Print wake or reset reason
@@ -96,13 +97,47 @@ async fn main(_spawner: Spawner) {
     // HX711 Pins configuration
     let hx711_dt = io.pins.gpio21.into_floating_input();
     let hx711_sck = io.pins.gpio20.into_push_pull_output();
-    let mut hx711_enable = io.pins.gpio0.into_push_pull_output();
-    let _ = hx711_enable.set_high();
+    let mut power_supply_enable = io.pins.gpio0.into_push_pull_output();
+    let _ = power_supply_enable.set_high();
     // HX711 configuration
     let mut load_sensor = hx711::HX711::new(hx711_sck, hx711_dt, delay);
     //load_sensor.tare(16);
     //set the sensitivity/scale
     load_sensor.set_scale(1.0);
+
+    // Get HX711 data
+    let mut hx711_value: [u8; 12] = [0; 12];
+    // Wait HX711 to be ready
+    for _ in 1..=10 {
+        if load_sensor.is_ready() {
+            let reading = load_sensor.read_scaled();
+            match reading {
+                Ok(x) => {
+                    let raw_value: u32 = x as u32;
+                    hx711_value[0] = ((raw_value >> 24) & 0xFF) as u8;
+                    hx711_value[1] = ((raw_value >> 16) & 0xFF) as u8;
+                    hx711_value[2] = ((raw_value >> 8) & 0xFF) as u8;
+                    hx711_value[3] = (raw_value & 0xFF) as u8;
+                }
+                Err(_) => println!("Error reading HX711"),
+            }
+            println!("HX711 reading = {:?}", reading);
+            break;
+        }
+        delay.delay_millis(100u32);
+        println!("Wait for HX711 available");
+    }
+
+    // Read vbat
+    let analog_pin = io.pins.gpio1.into_analog();
+    // Create ADC instances
+    let mut adc1_config = AdcConfig::new();
+    let mut adc1_pin = adc1_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
+    let mut adc1 = Adc::new(peripherals.ADC1, adc1_config);
+
+    let pin_value: u16 = nb::block!(adc1.read_oneshot(&mut adc1_pin)).unwrap();
+    //TODO add read value to Lora frame
+    println!("ADC reading = {}", pin_value);
 
     let mut spi_bus = Spi::new(peripherals.SPI2, 200u32.kHz(), SpiMode::Mode0, &clocks)
         .with_pins(Some(sclk), Some(mosi), Some(miso), gpio::NO_PIN)
@@ -128,29 +163,6 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();
     let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
-
-    // Get HX711 data
-    let mut hx711_value: [u8; 4] = [0, 0, 0, 0];
-    // Wait HX711 to be ready
-    for _ in 1..=10 {
-        if load_sensor.is_ready() {
-            let reading = load_sensor.read_scaled();
-            match reading {
-                Ok(x) => {
-                    let raw_value: u32 = x as u32;
-                    hx711_value[0] = ((raw_value >> 24) & 0xFF) as u8;
-                    hx711_value[1] = ((raw_value >> 16) & 0xFF) as u8;
-                    hx711_value[2] = ((raw_value >> 8) & 0xFF) as u8;
-                    hx711_value[3] = (raw_value & 0xFF) as u8;
-                },
-                Err(_) => println!("Error reading HX711"),
-            }
-            println!("HX711 reading = {:?}", reading);
-            break;
-        }
-        delay.delay_millis(100u32);
-        println!("Wait for HX711 available");
-    }
 
     let mut is_join: bool = false;
     unsafe {
@@ -236,7 +248,6 @@ async fn main(_spawner: Spawner) {
         }
     }
 
-    delay.delay_millis(5000u32);
     println!("Go to sleep");
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
     delay.delay_millis(100u32);
