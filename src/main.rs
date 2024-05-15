@@ -7,11 +7,11 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::{
     analog::adc::{Adc, AdcConfig, Attenuation},
-    clock::ClockControl,
+    clock::{ClockControl, Clocks},
     dma::*,
     dma_descriptors, embassy,
-    gpio::{self, Io},
-    peripherals::Peripherals,
+    gpio::{self, Floating, GpioPin, Input, Io, Output},
+    peripherals::{Peripherals, SPI2},
     prelude::*,
     rng::Rng,
     rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, Rtc, SocResetReason},
@@ -39,9 +39,12 @@ use lorawan_device::{
     mac::Session,
 };
 
+// Constant for Lorawan network
 const LORAWAN_REGION: region::Region = region::Region::EU868;
 const MAX_TX_POWER: u8 = 14;
 
+/// The following variables are stored in RTC RAM to keep their values
+/// after deep sleep
 #[ram(rtc_fast)]
 static mut BOOT_CNT: u8 = 0;
 #[ram(rtc_fast)]
@@ -51,95 +54,28 @@ static mut IS_JOIN: bool = false;
 #[ram(rtc_fast)]
 static mut SAVED_SESSION: Option<Session> = None;
 
-#[main]
-async fn main(_spawner: Spawner) {
-    // Configure peripherals
-    let peripherals = Peripherals::take();
-    let system = SystemControl::new(peripherals.SYSTEM);
-    let clocks = ClockControl::max(system.clock_control).freeze();
-    let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
-    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let mut rtc = Rtc::new(peripherals.LPWR, None);
-    let mut rng = Rng::new(peripherals.RNG);
-    embassy::init(&clocks, timg0);
-    let dma = Dma::new(peripherals.DMA);
+/// Join lorawan network then send a message if join is success
+/// The session is saved in RTC RAM to be able to restore it after
+/// deep sleep
+async fn send_lorawan_msg(
+    spi2: SPI2,
+    dma: Dma<'_>,
+    mut rng: Rng,
+    clocks: &Clocks<'_>,
+    delay: esp_hal::delay::Delay,
+    sclk: GpioPin<gpio::Unknown, 10>,
+    miso: GpioPin<gpio::Unknown, 6>,
+    mosi: GpioPin<gpio::Unknown, 7>,
+    nss: GpioPin<Output<gpio::OpenDrain>, 8>,
+    reset: GpioPin<Output<gpio::OpenDrain>, 5>,
+    dio1: GpioPin<Input<gpio::PullDown>, 3>,
+    busy: GpioPin<Input<gpio::PullDown>, 4>,
+    data: &mut [u8; 12],
+) {
     let dma_channel = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
 
-    // FIXME: remove it, it is used no see logs after power on (time to open serial port)
-    let mut delay = esp_hal::delay::Delay::new(&clocks);
-    delay.delay_millis(1000u32);
-
-    println!("SW version 1.0.0");
-    // Print wake or reset reason
-    let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
-    println!("Reset reason: {:?}", reason);
-    let wake_reason = get_wakeup_cause();
-    println!("Wake reason: {:?}", wake_reason);
-
-    unsafe {
-        println!("BOOT_CNT {:x?}", BOOT_CNT);
-        BOOT_CNT += 1;
-        println!("IS_JOIN: {:?}", IS_JOIN);
-        println!("SAVED_SESSION: {:?}", SAVED_SESSION);
-        println!("SEED: {:x?}", SEED);
-    }
-
-    // Configure SPI
-    let sclk = io.pins.gpio10;
-    let miso = io.pins.gpio6;
-    let mosi = io.pins.gpio7;
-    let nss = io.pins.gpio8.into_open_drain_output();
-    let reset = io.pins.gpio5.into_open_drain_output();
-    let dio1 = io.pins.gpio3.into_pull_down_input().degrade();
-    let busy = io.pins.gpio4.into_pull_down_input().degrade();
-
-    // HX711 Pins configuration
-    let hx711_dt = io.pins.gpio21.into_floating_input();
-    let hx711_sck = io.pins.gpio20.into_push_pull_output();
-    let mut power_supply_enable = io.pins.gpio0.into_push_pull_output();
-    let _ = power_supply_enable.set_high();
-    // HX711 configuration
-    let mut load_sensor = hx711::HX711::new(hx711_sck, hx711_dt, delay);
-    //load_sensor.tare(16);
-    //set the sensitivity/scale
-    load_sensor.set_scale(1.0);
-
-    // Get HX711 data
-    let mut hx711_value: [u8; 12] = [0; 12];
-    // Wait HX711 to be ready
-    for _ in 1..=10 {
-        if load_sensor.is_ready() {
-            let reading = load_sensor.read_scaled();
-            match reading {
-                Ok(x) => {
-                    let raw_value: u32 = x as u32;
-                    hx711_value[0] = ((raw_value >> 24) & 0xFF) as u8;
-                    hx711_value[1] = ((raw_value >> 16) & 0xFF) as u8;
-                    hx711_value[2] = ((raw_value >> 8) & 0xFF) as u8;
-                    hx711_value[3] = (raw_value & 0xFF) as u8;
-                }
-                Err(_) => println!("Error reading HX711"),
-            }
-            println!("HX711 reading = {:?}", reading);
-            break;
-        }
-        delay.delay_millis(100u32);
-        println!("Wait for HX711 available");
-    }
-
-    // Read vbat
-    let analog_pin = io.pins.gpio1.into_analog();
-    // Create ADC instances
-    let mut adc1_config = AdcConfig::new();
-    let mut adc1_pin = adc1_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
-    let mut adc1 = Adc::new(peripherals.ADC1, adc1_config);
-
-    let pin_value: u16 = nb::block!(adc1.read_oneshot(&mut adc1_pin)).unwrap();
-    //TODO add read value to Lora frame
-    println!("ADC reading = {}", pin_value);
-
-    let mut spi_bus = Spi::new(peripherals.SPI2, 200u32.kHz(), SpiMode::Mode0, &clocks)
+    let mut spi_bus = Spi::new(spi2, 200u32.kHz(), SpiMode::Mode0, clocks)
         .with_pins(Some(sclk), Some(mosi), Some(miso), gpio::NO_PIN)
         .with_dma(dma_channel.configure_for_async(
             false,
@@ -157,7 +93,8 @@ async fn main(_spawner: Spawner) {
         use_dio2_as_rfswitch: true,
         rx_boost: false,
     };
-    let iv = GenericSx126xInterfaceVariant::new(reset, dio1, busy, None, None).unwrap();
+    let iv = GenericSx126xInterfaceVariant::new(reset, dio1.degrade(), busy.degrade(), None, None)
+        .unwrap();
     let lora = LoRa::new(Sx126x::new(spi, iv, config), true, Delay)
         .await
         .unwrap();
@@ -170,6 +107,7 @@ async fn main(_spawner: Spawner) {
             is_join = true;
         }
     }
+
     if !is_join {
         println!("Ask to join lora network");
         let seed = rng.random();
@@ -187,14 +125,10 @@ async fn main(_spawner: Spawner) {
             .await;
         if let Ok(JoinResponse::JoinSuccess) = resp {
             println!("LoRaWAN network joined");
-            let send_status = device
-                .send(&hx711_value, 1, false)
-                .await
-                .unwrap();
+            let send_status = device.send(data, 1, false).await.unwrap();
             match send_status {
                 SendResponse::RxComplete => {
                     println!("LoRaWAN send succes");
-                    // Save state in RTC RAM
                     unsafe {
                         SEED = seed;
                         IS_JOIN = true;
@@ -229,10 +163,7 @@ async fn main(_spawner: Spawner) {
                     seed.into(),
                     Some(saved_session),
                 );
-                let send_status = device
-                    .send(&hx711_value, 1, false)
-                    .await
-                    .unwrap();
+                let send_status = device.send(data, 1, false).await.unwrap();
 
                 match send_status {
                     SendResponse::RxComplete => {
@@ -247,9 +178,141 @@ async fn main(_spawner: Spawner) {
             }
         }
     }
+}
 
-    println!("Go to sleep");
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
+/// Read vbatt from ADC2 GPIO1 and returns the value in mV
+/// Hardware gain is 0.5
+fn read_vbat(
+    mut adc2_pin: esp_hal::analog::adc::AdcPin<
+        GpioPin<gpio::Analog, 1>,
+        esp_hal::peripherals::ADC2,
+    >,
+    mut adc2: Adc<esp_hal::peripherals::ADC2>,
+) -> u16 {
+    // Read vbat
+    let raw_value: u16 = nb::block!(adc2.read_oneshot(&mut adc2_pin)).unwrap();
+    return raw_value * 2;
+}
+
+/// Read hx7111
+fn hx7111_read_value(
+    hx711_dt: GpioPin<Input<Floating>, 21>,
+    hx711_sck: GpioPin<Output<esp_hal::gpio::PushPull>, 20>,
+    delay: esp_hal::delay::Delay,
+) -> u32 {
+    let mut hx7111_value: u32 = 0;
+    let mut load_sensor = hx711::HX711::new(hx711_sck, hx711_dt, delay);
+    load_sensor.set_scale(1.0);
+    //set the sensitivity/scale
+    // load_sensor.tare(16);
+    // Wait HX711 to be ready
+    for _ in 1..=10 {
+        if load_sensor.is_ready() {
+            let reading = load_sensor.read_scaled();
+            match reading {
+                Ok(x) => {
+                    hx7111_value = x as u32;
+                }
+                Err(_) => println!("Error reading HX711"),
+            }
+            println!("HX711 reading = {:?}", reading);
+            break;
+        }
+        delay.delay_millis(100u32);
+        println!("Wait for HX711 available");
+    }
+
+    return hx7111_value;
+}
+
+#[main]
+async fn main(_spawner: Spawner) {
+    // Configure peripherals
+    let peripherals = Peripherals::take();
+    let system = SystemControl::new(peripherals.SYSTEM);
+    let clocks = ClockControl::max(system.clock_control).freeze();
+    let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
+    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    let mut rtc = Rtc::new(peripherals.LPWR, None);
+    let rng: Rng = Rng::new(peripherals.RNG);
+    embassy::init(&clocks, timg0);
+    let dma: Dma = Dma::new(peripherals.DMA);
+    let mut delay = esp_hal::delay::Delay::new(&clocks);
+
+    println!("SW version 1.0.0");
+    // Print wake or reset reason
+    // TODO send the reset reason to Lorax
+    let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
+    println!("Reset reason: {:?}", reason);
+    let wake_reason = get_wakeup_cause();
+    println!("Wake reason: {:?}", wake_reason);
+
+    unsafe {
+        println!("BOOT_CNT {:x?}", BOOT_CNT);
+        BOOT_CNT += 1;
+        println!("IS_JOIN: {:?}", IS_JOIN);
+        println!("SAVED_SESSION: {:?}", SAVED_SESSION);
+        println!("SEED: {:x?}", SEED);
+    }
+
+    // Enable HX711 and ADC power
+    let mut power_supply_enable = io.pins.gpio0.into_push_pull_output();
+    let _ = power_supply_enable.set_high();
+
+    // Read HX711 value
+    let raw_value: u32 = hx7111_read_value(
+        io.pins.gpio21.into_floating_input(),
+        io.pins.gpio20.into_push_pull_output(),
+        delay,
+    );
+
+    // Read vbat measure
+    let analog_pin = io.pins.gpio1.into_analog();
+    let mut adc2_config = AdcConfig::new();
+    let adc2_pin: esp_hal::analog::adc::AdcPin<
+        GpioPin<gpio::Analog, 1>,
+        esp_hal::peripherals::ADC2,
+    > = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
+    let adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(peripherals.ADC2, adc2_config);
+    let vbat: u16 = read_vbat(adc2_pin, adc2);
+    println!("ADC reading = {} mV", vbat);
+
+    // Configure GPIO for SPI
+    let sclk: GpioPin<gpio::Unknown, 10> = io.pins.gpio10;
+    let miso: GpioPin<gpio::Unknown, 6> = io.pins.gpio6;
+    let mosi: GpioPin<gpio::Unknown, 7> = io.pins.gpio7;
+    let nss: GpioPin<Output<gpio::OpenDrain>, 8> = io.pins.gpio8.into_open_drain_output();
+    let reset: GpioPin<Output<gpio::OpenDrain>, 5> = io.pins.gpio5.into_open_drain_output();
+    let dio1: GpioPin<Input<gpio::PullDown>, 3> = io.pins.gpio3.into_pull_down_input();
+    let busy: GpioPin<Input<gpio::PullDown>, 4> = io.pins.gpio4.into_pull_down_input();
+
+    // Build Loraframe
+    let mut lora_frame: [u8; 12] = [0; 12];
+    lora_frame[1] = ((vbat - 3000) / 5) as u8;
+    lora_frame[2] = ((raw_value >> 24) & 0xFF) as u8;
+    lora_frame[3] = ((raw_value >> 16) & 0xFF) as u8;
+    lora_frame[4] = ((raw_value >> 8) & 0xFF) as u8;
+
+    // Send messsage on Lora network
+    send_lorawan_msg(
+        peripherals.SPI2,
+        dma,
+        rng,
+        &clocks,
+        delay,
+        sclk,
+        miso,
+        mosi,
+        nss,
+        reset,
+        dio1,
+        busy,
+        &mut lora_frame,
+    )
+    .await;
+
+    println!("End of cycle, go to sleep");
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(300));
     delay.delay_millis(100u32);
     rtc.sleep_deep(&[&timer], &mut delay);
 }
