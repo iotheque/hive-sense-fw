@@ -54,6 +54,17 @@ static mut IS_JOIN: bool = false;
 #[ram(rtc_fast)]
 static mut SAVED_SESSION: Option<Session> = None;
 
+// All GPIO needed for SPI
+struct SpiGpio {
+    sclk: GpioPin<gpio::Unknown, 10>,
+    miso: GpioPin<gpio::Unknown, 6>,
+    mosi: GpioPin<gpio::Unknown, 7>,
+    nss: GpioPin<Output<gpio::OpenDrain>, 8>,
+    reset: GpioPin<Output<gpio::OpenDrain>, 5>,
+    dio1: GpioPin<Input<gpio::PullDown>, 3>,
+    busy: GpioPin<Input<gpio::PullDown>, 4>,
+}
+
 /// Join lorawan network then send a message if join is success
 /// The session is saved in RTC RAM to be able to restore it after
 /// deep sleep
@@ -63,27 +74,26 @@ async fn send_lorawan_msg(
     mut rng: Rng,
     clocks: &Clocks<'_>,
     delay: esp_hal::delay::Delay,
-    sclk: GpioPin<gpio::Unknown, 10>,
-    miso: GpioPin<gpio::Unknown, 6>,
-    mosi: GpioPin<gpio::Unknown, 7>,
-    nss: GpioPin<Output<gpio::OpenDrain>, 8>,
-    reset: GpioPin<Output<gpio::OpenDrain>, 5>,
-    dio1: GpioPin<Input<gpio::PullDown>, 3>,
-    busy: GpioPin<Input<gpio::PullDown>, 4>,
+    spi_gpio: SpiGpio,
     data: &mut [u8; 12],
 ) {
     let dma_channel = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
 
     let mut spi_bus = Spi::new(spi2, 200u32.kHz(), SpiMode::Mode0, clocks)
-        .with_pins(Some(sclk), Some(mosi), Some(miso), gpio::NO_PIN)
+        .with_pins(
+            Some(spi_gpio.sclk),
+            Some(spi_gpio.mosi),
+            Some(spi_gpio.miso),
+            gpio::NO_PIN,
+        )
         .with_dma(dma_channel.configure_for_async(
             false,
             &mut descriptors,
             &mut rx_descriptors,
             DmaPriority::Priority0,
         ));
-    let spi = ExclusiveDevice::new(&mut spi_bus, nss, Delay);
+    let spi = ExclusiveDevice::new(&mut spi_bus, spi_gpio.nss, Delay);
 
     // Configure Sx1262 chip
     let config = sx126x::Config {
@@ -93,8 +103,14 @@ async fn send_lorawan_msg(
         use_dio2_as_rfswitch: true,
         rx_boost: false,
     };
-    let iv = GenericSx126xInterfaceVariant::new(reset, dio1.degrade(), busy.degrade(), None, None)
-        .unwrap();
+    let iv = GenericSx126xInterfaceVariant::new(
+        spi_gpio.reset,
+        spi_gpio.dio1.degrade(),
+        spi_gpio.busy.degrade(),
+        None,
+        None,
+    )
+    .unwrap();
     let lora = LoRa::new(Sx126x::new(spi, iv, config), true, Delay)
         .await
         .unwrap();
@@ -132,7 +148,7 @@ async fn send_lorawan_msg(
                     unsafe {
                         SEED = seed;
                         IS_JOIN = true;
-                        SAVED_SESSION = device.get_session().clone().cloned();
+                        SAVED_SESSION = device.get_session().cloned();
                     }
                 }
                 _ => {
@@ -168,7 +184,7 @@ async fn send_lorawan_msg(
                 match send_status {
                     SendResponse::RxComplete => {
                         println!("LoRaWAN send succes");
-                        SAVED_SESSION = device.get_session().clone().cloned();
+                        SAVED_SESSION = device.get_session().cloned();
                     }
                     _ => {
                         println!("LoRaWAN send error, reset session");
@@ -191,7 +207,7 @@ fn read_vbat(
 ) -> u16 {
     // Read vbat
     let raw_value: u16 = nb::block!(adc2.read_oneshot(&mut adc2_pin)).unwrap();
-    return raw_value * 2;
+    raw_value * 2
 }
 
 /// Read hx7111
@@ -222,7 +238,7 @@ fn hx7111_read_value(
         println!("Wait for HX711 available");
     }
 
-    return hx7111_value;
+    hx7111_value
 }
 
 #[main]
@@ -257,7 +273,7 @@ async fn main(_spawner: Spawner) {
 
     // Enable HX711 and ADC power
     let mut power_supply_enable = io.pins.gpio0.into_push_pull_output();
-    let _ = power_supply_enable.set_high();
+    power_supply_enable.set_high();
 
     // Read HX711 value
     let raw_value: u32 = hx7111_read_value(
@@ -293,13 +309,7 @@ async fn main(_spawner: Spawner) {
     lora_frame[3] = ((raw_value >> 16) & 0xFF) as u8;
     lora_frame[4] = ((raw_value >> 8) & 0xFF) as u8;
 
-    // Send messsage on Lora network
-    send_lorawan_msg(
-        peripherals.SPI2,
-        dma,
-        rng,
-        &clocks,
-        delay,
+    let spi_gpio = SpiGpio {
         sclk,
         miso,
         mosi,
@@ -307,6 +317,16 @@ async fn main(_spawner: Spawner) {
         reset,
         dio1,
         busy,
+    };
+
+    // Send messsage on Lora network
+    send_lorawan_msg(
+        peripherals.SPI2,
+        dma,
+        rng,
+        &clocks,
+        delay,
+        spi_gpio,
         &mut lora_frame,
     )
     .await;
