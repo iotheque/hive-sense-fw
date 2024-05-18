@@ -37,8 +37,7 @@ use lorawan_device::{
     mac::Session,
 };
 
-// Constant for Lorawan network
-const LORAWAN_REGION: region::Region = region::Region::EU868;
+/// Lora Max TX power
 const MAX_TX_POWER: u8 = 14;
 
 /// The following variables are stored in RTC RAM to keep their values
@@ -70,7 +69,6 @@ async fn send_lorawan_msg(
     spi2: SPI2,
     dma: Dma<'_>,
     clocks: &Clocks<'_>,
-    delay: esp_hal::delay::Delay,
     spi_gpio: SpiGpio,
     data: &mut [u8; 12],
 ) {
@@ -112,7 +110,7 @@ async fn send_lorawan_msg(
         .await
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();
-    let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
+    let region: region::Configuration = region::Configuration::new(region::Region::EU868);
 
     let mut is_join: bool = false;
     unsafe {
@@ -156,8 +154,6 @@ async fn send_lorawan_msg(
                     }
                 }
             }
-
-            delay.delay_millis(1000u32);
         } else {
             // Save state in RTC RAM
             unsafe {
