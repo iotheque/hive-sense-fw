@@ -11,17 +11,24 @@ use esp_hal::{
     dma::*,
     dma_descriptors, embassy,
     gpio::{self, Floating, GpioPin, Input, Output, IO},
-    peripherals::{Peripherals, ADC2, RNG, SPI2},
+    peripherals::{Peripherals, ADC2, RNG, SPI2, WIFI},
     prelude::*,
+    rng::Rng,
     rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, Rtc, SocResetReason},
     spi::{
         master::{prelude::*, Spi},
         SpiMode,
     },
+    systimer::SystemTimer,
     timer::TimerGroup,
     Cpu,
 };
 use esp_println::println;
+use esp_wifi::{
+    initialize,
+    wifi::{AccessPointInfo, WifiError, WifiStaDevice},
+    EspWifiInitFor,
+};
 use loadcell::{hx711, LoadCell};
 use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
@@ -127,11 +134,11 @@ async fn send_lorawan_msg(
             Device::new_with_seed(region, radio, EmbassyTimer::new(), seed.into());
         let resp = device
             .join(&JoinMode::OTAA {
-                deveui: DevEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+                deveui: DevEui::from([0x02, 0x88, 0x88, 0x00, 0x00, 0x33, 0x32, 0x22]),
                 appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
                 appkey: AppKey::from([
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00,
+                    0x59, 0xeb, 0xe5, 0xdf, 0x41, 0x1b, 0x46, 0xc5, 0x44, 0x25, 0x27, 0x98, 0x77,
+                    0x66, 0x95, 0xf7,
                 ]),
             })
             .await;
@@ -235,6 +242,29 @@ fn hx7111_read_value(
     hx7111_value
 }
 
+/// Wifi scan
+fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI) {
+    let (_, mut controller) = esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+    controller.start().unwrap();
+    let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
+    println!("Result is {:?}", res);
+    match res {
+        Ok((access_points, count)) => {
+            println!("Number of access points found: {}", count);
+            for ap in access_points.iter() {
+                println!("SSID: {}", ap.ssid);
+                println!(
+                    "BSSID: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                    ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]
+                );
+            }
+        }
+        Err(e) => {
+            println!("Failed to scan WiFi: {:?}", e);
+        }
+    }
+}
+
 #[main]
 async fn main(_spawner: Spawner) {
     // Configure peripherals
@@ -244,6 +274,7 @@ async fn main(_spawner: Spawner) {
     let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut rtc = Rtc::new(peripherals.LPWR, None);
+    let wifi = peripherals.WIFI;
     embassy::init(&clocks, timg0);
     let dma: Dma = Dma::new(peripherals.DMA);
     let mut delay = esp_hal::delay::Delay::new(&clocks);
@@ -287,6 +318,18 @@ async fn main(_spawner: Spawner) {
     let vbat: u16 = read_vbat(adc2_pin, adc2);
     println!("ADC reading = {} mV", vbat);
 
+    // Wifi Scan
+    let wifi_timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
+    let init = initialize(
+        EspWifiInitFor::Wifi,
+        wifi_timer,
+        Rng::new(peripherals.RNG),
+        system.radio_clock_control,
+        &clocks,
+    )
+    .unwrap();
+    scan_wifi(init, wifi);
+
     // Configure GPIO for SPI
     let sclk: GpioPin<gpio::Unknown, 10> = io.pins.gpio10;
     let miso: GpioPin<gpio::Unknown, 6> = io.pins.gpio6;
@@ -315,6 +358,24 @@ async fn main(_spawner: Spawner) {
 
     // Send messsage on Lora network
     send_lorawan_msg(peripherals.SPI2, dma, &clocks, spi_gpio, &mut lora_frame).await;
+
+    /*
+    // Pierrick
+    deveui: DevEui::from([0x02, 0x88, 0x88, 0x00, 0x00, 0x33, 0x32, 0x22]),
+    appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    appkey: AppKey::from([
+        0x59, 0xeb, 0xe5, 0xdf, 0x41, 0x1b, 0x46, 0xc5, 0x44, 0x25, 0x27, 0x98, 0x77,
+        0x66, 0x95, 0xf7,
+    ]),
+
+    // Thibaud
+    deveui: DevEui::from([0xcd, 0xa1, 0x75, 0xc0, 0x32, 0x63, 0x9c, 0xe0]),
+    appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    appkey: AppKey::from([
+        0x15, 0xf6, 0xf4, 0xd4, 0x2a, 0x95, 0xb0, 0x97, 0x53, 0x27, 0xb7, 0xc1, 0x45,
+        0x6e, 0xc5, 0x45,
+    ]),
+    */
 
     println!("End of cycle, go to sleep");
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(300));
