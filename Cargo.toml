@@ -14,7 +14,7 @@ esp-backtrace = { version = "0.11.0", features = [
     "defmt",
 ] }
 
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev="68a4fb29ed163f01107c0560caf2cc94325a1608", features = [
+esp-hal = { version = "0.17.0", features = [
   "async",
   "esp32c3",
   "embassy",

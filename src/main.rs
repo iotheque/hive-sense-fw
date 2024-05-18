@@ -6,21 +6,19 @@ use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_backtrace as _;
 use esp_hal::{
-    analog::adc::{Adc, AdcConfig, Attenuation},
+    analog::adc::{AdcConfig, Attenuation, ADC},
     clock::{ClockControl, Clocks},
     dma::*,
     dma_descriptors, embassy,
-    gpio::{self, Floating, GpioPin, Input, Io, Output},
-    peripherals::{Peripherals, SPI2},
+    gpio::{self, Floating, GpioPin, Input, Output, IO},
+    peripherals::{Peripherals, ADC2, RNG, SPI2},
     prelude::*,
-    rng::Rng,
     rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, Rtc, SocResetReason},
     spi::{
         master::{prelude::*, Spi},
         SpiMode,
     },
-    system::SystemControl,
-    timer::timg::TimerGroup,
+    timer::TimerGroup,
     Cpu,
 };
 use esp_println::println;
@@ -71,7 +69,6 @@ struct SpiGpio {
 async fn send_lorawan_msg(
     spi2: SPI2,
     dma: Dma<'_>,
-    mut rng: Rng,
     clocks: &Clocks<'_>,
     delay: esp_hal::delay::Delay,
     spi_gpio: SpiGpio,
@@ -126,7 +123,8 @@ async fn send_lorawan_msg(
 
     if !is_join {
         println!("Ask to join lora network");
-        let seed = rng.random();
+        let rng_reg = unsafe { &*RNG::PTR };
+        let seed = rng_reg.data().read().bits();
         let mut device: Device<_, Crypto, _, _> =
             Device::new_with_seed(region, radio, EmbassyTimer::new(), seed.into());
         let resp = device
@@ -203,7 +201,7 @@ fn read_vbat(
         GpioPin<gpio::Analog, 1>,
         esp_hal::peripherals::ADC2,
     >,
-    mut adc2: Adc<esp_hal::peripherals::ADC2>,
+    mut adc2: ADC<ADC2>,
 ) -> u16 {
     // Read vbat
     let raw_value: u16 = nb::block!(adc2.read_oneshot(&mut adc2_pin)).unwrap();
@@ -245,12 +243,11 @@ fn hx7111_read_value(
 async fn main(_spawner: Spawner) {
     // Configure peripherals
     let peripherals = Peripherals::take();
-    let system = SystemControl::new(peripherals.SYSTEM);
+    let system = peripherals.SYSTEM.split();
     let clocks = ClockControl::max(system.clock_control).freeze();
     let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
-    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut rtc = Rtc::new(peripherals.LPWR, None);
-    let rng: Rng = Rng::new(peripherals.RNG);
     embassy::init(&clocks, timg0);
     let dma: Dma = Dma::new(peripherals.DMA);
     let mut delay = esp_hal::delay::Delay::new(&clocks);
@@ -289,7 +286,8 @@ async fn main(_spawner: Spawner) {
         GpioPin<gpio::Analog, 1>,
         esp_hal::peripherals::ADC2,
     > = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
-    let adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(peripherals.ADC2, adc2_config);
+
+    let adc2: ADC<ADC2> = ADC::<ADC2>::new(peripherals.ADC2, adc2_config);
     let vbat: u16 = read_vbat(adc2_pin, adc2);
     println!("ADC reading = {} mV", vbat);
 
@@ -320,16 +318,7 @@ async fn main(_spawner: Spawner) {
     };
 
     // Send messsage on Lora network
-    send_lorawan_msg(
-        peripherals.SPI2,
-        dma,
-        rng,
-        &clocks,
-        delay,
-        spi_gpio,
-        &mut lora_frame,
-    )
-    .await;
+    send_lorawan_msg(peripherals.SPI2, dma, &clocks, spi_gpio, &mut lora_frame).await;
 
     println!("End of cycle, go to sleep");
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(300));
