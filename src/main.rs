@@ -47,6 +47,9 @@ use lorawan_device::{
 /// Lora Max TX power
 const MAX_TX_POWER: u8 = 14;
 
+/// Lora data fame size in bytes 
+const LORA_FRAME_SIZE_BYTES: usize = 24;
+
 /// The following variables are stored in RTC RAM to keep their values
 /// after deep sleep
 #[ram(rtc_fast)]
@@ -77,7 +80,7 @@ async fn send_lorawan_msg(
     dma: Dma<'_>,
     clocks: &Clocks<'_>,
     spi_gpio: SpiGpio,
-    data: &mut [u8; 12],
+    data: &mut [u8; LORA_FRAME_SIZE_BYTES],
 ) {
     let dma_channel = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
@@ -243,7 +246,7 @@ fn hx7111_read_value(
 }
 
 /// Wifi scan
-fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI) {
+fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) {
     let (_, mut controller) = esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
     controller.start().unwrap();
     let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
@@ -251,12 +254,18 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI) {
     match res {
         Ok((access_points, count)) => {
             println!("Number of access points found: {}", count);
-            for ap in access_points.iter() {
+            for (i, ap)  in access_points.iter().enumerate().take(2) {
                 println!("SSID: {}", ap.ssid);
                 println!(
                     "BSSID: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
                     ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]
                 );
+                out[i] = ap.bssid[0];
+                out[i+1] = ap.bssid[1];
+                out[i+2] = ap.bssid[2];
+                out[i+3] = ap.bssid[3];
+                out[i+4] = ap.bssid[4];
+                out[i+5] = ap.bssid[5]; 
             }
         }
         Err(e) => {
@@ -318,7 +327,7 @@ async fn main(_spawner: Spawner) {
     let vbat: u16 = read_vbat(adc2_pin, adc2);
     println!("ADC reading = {} mV", vbat);
 
-    // Wifi Scan
+    // Wifi Init
     let wifi_timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
     let init = initialize(
         EspWifiInitFor::Wifi,
@@ -328,7 +337,6 @@ async fn main(_spawner: Spawner) {
         &clocks,
     )
     .unwrap();
-    scan_wifi(init, wifi);
 
     // Configure GPIO for SPI
     let sclk: GpioPin<gpio::Unknown, 10> = io.pins.gpio10;
@@ -340,11 +348,13 @@ async fn main(_spawner: Spawner) {
     let busy: GpioPin<Input<gpio::PullDown>, 4> = io.pins.gpio4.into_pull_down_input();
 
     // Build Loraframe
-    let mut lora_frame: [u8; 12] = [0; 12];
+    let mut lora_frame: [u8; LORA_FRAME_SIZE_BYTES] = [0; LORA_FRAME_SIZE_BYTES];
     lora_frame[1] = ((vbat - 3000) / 5) as u8;
     lora_frame[2] = ((raw_value >> 24) & 0xFF) as u8;
     lora_frame[3] = ((raw_value >> 16) & 0xFF) as u8;
     lora_frame[4] = ((raw_value >> 8) & 0xFF) as u8;
+
+    scan_wifi(init, wifi, &mut lora_frame[6..]);
 
     let spi_gpio = SpiGpio {
         sclk,
