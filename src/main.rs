@@ -287,7 +287,7 @@ async fn main(_spawner: Spawner) {
     let dma: Dma = Dma::new(peripherals.DMA);
     let mut delay = esp_hal::delay::Delay::new(&clocks);
 
-    println!("SW version 1.0.0");
+    println!("SW version {:?}", env!("CARGO_PKG_VERSION"));
     // Print wake or reset reason
     // TODO send the reset reason to Lora
     let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
