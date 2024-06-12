@@ -840,6 +840,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hive-sense-fw"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "defmt",
+ "embassy-executor",
+ "embassy-time",
+ "embassy-time-driver",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "embedded-hal-bus",
+ "embedded-io-async",
+ "esp-backtrace",
+ "esp-hal",
+ "esp-hal-embassy",
+ "esp-println",
+ "esp-wifi",
+ "fugit",
+ "heapless 0.8.0",
+ "loadcell",
+ "lora-phy",
+ "lorawan-device",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1192,31 +1217,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "ruche-fw"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "defmt",
- "embassy-executor",
- "embassy-time",
- "embassy-time-driver",
- "embedded-hal 1.0.0",
- "embedded-hal-async",
- "embedded-hal-bus",
- "embedded-io-async",
- "esp-backtrace",
- "esp-hal",
- "esp-hal-embassy",
- "esp-println",
- "esp-wifi",
- "fugit",
- "heapless 0.8.0",
- "loadcell",
- "lora-phy",
- "lorawan-device",
 ]
 
 [[package]]

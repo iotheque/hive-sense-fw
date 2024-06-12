@@ -1,5 +1,5 @@
 [package]
-name = "ruche-fw"
+name = "hive-sense-fw"
 version = "0.1.0"
 authors = ["Pierrick Curt <pierrickcurt@gmail.com>"]
 edition = "2021"
