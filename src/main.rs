@@ -11,7 +11,7 @@ use esp_hal::{
     dma::*,
     dma_descriptors,
     gpio::{self, AnyInput, AnyOutput, GpioPin, Input, Io, Level, Output, Pull},
-    peripherals::{Peripherals, SPI2},
+    peripherals::{Peripherals, SPI2, WIFI},
     prelude::*,
     rng::Rng,
     rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, Rtc, SocResetReason},
@@ -20,10 +20,15 @@ use esp_hal::{
         SpiMode,
     },
     system::SystemControl,
-    timer::timg::TimerGroup,
+    timer::{systimer::SystemTimer, timg::TimerGroup},
     Cpu,
 };
 use esp_println::println;
+use esp_wifi::{
+    initialize,
+    wifi::{AccessPointInfo, WifiError, WifiStaDevice},
+    EspWifiInitFor,
+};
 use loadcell::{hx711, LoadCell};
 use lora_phy::lorawan_radio::LorawanRadio;
 use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
@@ -41,6 +46,9 @@ use lorawan_device::{
 
 /// Lora Max TX power
 const MAX_TX_POWER: u8 = 14;
+
+/// Lora data fame size in bytes
+const LORA_FRAME_SIZE_BYTES: usize = 24;
 
 /// The following variables are stored in RTC RAM to keep their values
 /// after deep sleep
@@ -73,7 +81,7 @@ async fn send_lorawan_msg(
     mut rng: Rng,
     clocks: &Clocks<'_>,
     spi_gpio: SpiGpio,
-    data: &mut [u8; 12],
+    data: &mut [u8; LORA_FRAME_SIZE_BYTES],
 ) {
     let dma_channel = dma.channel0;
     let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
@@ -235,6 +243,35 @@ fn hx7111_read_value(
     hx7111_value
 }
 
+/// Wifi scan
+fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) {
+    let (_, mut controller) = esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+    controller.start().unwrap();
+    let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
+    println!("Result is {:?}", res);
+    match res {
+        Ok((access_points, count)) => {
+            println!("Number of access points found: {}", count);
+            for (i, ap) in access_points.iter().enumerate().take(2) {
+                println!("SSID: {}", ap.ssid);
+                println!(
+                    "BSSID: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                    ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]
+                );
+                out[i] = ap.bssid[0];
+                out[i + 1] = ap.bssid[1];
+                out[i + 2] = ap.bssid[2];
+                out[i + 3] = ap.bssid[3];
+                out[i + 4] = ap.bssid[4];
+                out[i + 5] = ap.bssid[5];
+            }
+        }
+        Err(e) => {
+            println!("Failed to scan WiFi: {:?}", e);
+        }
+    }
+}
+
 #[main]
 async fn main(_spawner: Spawner) {
     // Configure peripherals
@@ -246,6 +283,7 @@ async fn main(_spawner: Spawner) {
     let mut rtc = Rtc::new(peripherals.LPWR, None);
     let rng: Rng = Rng::new(peripherals.RNG);
     esp_hal_embassy::init(&clocks, timg0);
+    let wifi = peripherals.WIFI;
     let dma: Dma = Dma::new(peripherals.DMA);
     let mut delay = esp_hal::delay::Delay::new(&clocks);
 
@@ -279,6 +317,17 @@ async fn main(_spawner: Spawner) {
     let vbat: u16 = read_vbat(adc2_pin, adc2);
     println!("ADC reading = {} mV", vbat);
 
+    // Wifi Init
+    let wifi_timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
+    let init = initialize(
+        EspWifiInitFor::Wifi,
+        wifi_timer,
+        rng,
+        peripherals.RADIO_CLK,
+        &clocks,
+    )
+    .unwrap();
+
     // Configure GPIO for SPI
     let sclk: GpioPin<10> = io.pins.gpio10;
     let miso: GpioPin<6> = io.pins.gpio6;
@@ -289,11 +338,14 @@ async fn main(_spawner: Spawner) {
     let busy: GpioPin<4> = io.pins.gpio4;
 
     // Build Loraframe
-    let mut lora_frame: [u8; 12] = [0; 12];
+    let mut lora_frame: [u8; LORA_FRAME_SIZE_BYTES] = [0; LORA_FRAME_SIZE_BYTES];
     lora_frame[1] = ((vbat - 3000) / 5) as u8;
     lora_frame[2] = ((hx711_raw_value >> 24) & 0xFF) as u8;
     lora_frame[3] = ((hx711_raw_value >> 16) & 0xFF) as u8;
     lora_frame[4] = ((hx711_raw_value >> 8) & 0xFF) as u8;
+
+    // Scan wifi and add to the two strongest signals to Loraframe
+    scan_wifi(init, wifi, &mut lora_frame[6..]);
 
     let spi_gpio = SpiGpio {
         sclk,
