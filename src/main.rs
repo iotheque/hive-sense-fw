@@ -9,8 +9,8 @@ use esp_hal::{
     analog::adc::{Adc, AdcConfig, Attenuation},
     clock::{ClockControl, Clocks},
     dma::*,
-    dma_descriptors, embassy,
-    gpio::{self, Floating, GpioPin, Input, Io, Output},
+    dma_descriptors,
+    gpio::{self, AnyInput, AnyOutput, GpioPin, Input, Io, Level, Output, Pull},
     peripherals::{Peripherals, SPI2},
     prelude::*,
     rng::Rng,
@@ -25,10 +25,10 @@ use esp_hal::{
 };
 use esp_println::println;
 use loadcell::{hx711, LoadCell};
-use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::lorawan_radio::LorawanRadio;
-use lora_phy::sx126x::{self, Sx126x, Sx126xVariant, TcxoCtrlVoltage};
+use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
 use lora_phy::LoRa;
+use lora_phy::{iv::GenericSx126xInterfaceVariant, sx126x::Sx1262};
 use lorawan_device::{
     async_device::{region, Device, EmbassyTimer, JoinMode},
     AppEui, AppKey, DevEui,
@@ -39,8 +39,7 @@ use lorawan_device::{
     mac::Session,
 };
 
-// Constant for Lorawan network
-const LORAWAN_REGION: region::Region = region::Region::EU868;
+/// Lora Max TX power
 const MAX_TX_POWER: u8 = 14;
 
 /// The following variables are stored in RTC RAM to keep their values
@@ -56,13 +55,13 @@ static mut SAVED_SESSION: Option<Session> = None;
 
 // All GPIO needed for SPI
 struct SpiGpio {
-    sclk: GpioPin<gpio::Unknown, 10>,
-    miso: GpioPin<gpio::Unknown, 6>,
-    mosi: GpioPin<gpio::Unknown, 7>,
-    nss: GpioPin<Output<gpio::OpenDrain>, 8>,
-    reset: GpioPin<Output<gpio::OpenDrain>, 5>,
-    dio1: GpioPin<Input<gpio::PullDown>, 3>,
-    busy: GpioPin<Input<gpio::PullDown>, 4>,
+    sclk: GpioPin<10>,
+    miso: GpioPin<6>,
+    mosi: GpioPin<7>,
+    nss: GpioPin<8>,
+    reset: GpioPin<5>,
+    dio1: GpioPin<3>,
+    busy: GpioPin<4>,
 }
 
 /// Join lorawan network then send a message if join is success
@@ -73,7 +72,6 @@ async fn send_lorawan_msg(
     dma: Dma<'_>,
     mut rng: Rng,
     clocks: &Clocks<'_>,
-    delay: esp_hal::delay::Delay,
     spi_gpio: SpiGpio,
     data: &mut [u8; 12],
 ) {
@@ -93,29 +91,26 @@ async fn send_lorawan_msg(
             &mut rx_descriptors,
             DmaPriority::Priority0,
         ));
-    let spi = ExclusiveDevice::new(&mut spi_bus, spi_gpio.nss, Delay);
+    let spi = ExclusiveDevice::new(&mut spi_bus, Output::new(spi_gpio.nss, Level::High), Delay);
 
     // Configure Sx1262 chip
     let config = sx126x::Config {
-        chip: Sx126xVariant::Sx1262,
+        chip: Sx1262,
         tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V7),
         use_dcdc: false,
-        use_dio2_as_rfswitch: true,
         rx_boost: false,
     };
-    let iv = GenericSx126xInterfaceVariant::new(
-        spi_gpio.reset,
-        spi_gpio.dio1.degrade(),
-        spi_gpio.busy.degrade(),
-        None,
-        None,
-    )
-    .unwrap();
+
+    let io_reset = AnyOutput::new(spi_gpio.reset, Level::High);
+    let io_dio1 = AnyInput::new(spi_gpio.dio1, Pull::Down);
+    let io_busy = AnyInput::new(spi_gpio.busy, Pull::Down);
+
+    let iv = GenericSx126xInterfaceVariant::new(io_reset, io_dio1, io_busy, None, None).unwrap();
     let lora = LoRa::new(Sx126x::new(spi, iv, config), true, Delay)
         .await
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();
-    let region: region::Configuration = region::Configuration::new(LORAWAN_REGION);
+    let region: region::Configuration = region::Configuration::new(region::Region::EU868);
 
     let mut is_join: bool = false;
     unsafe {
@@ -143,7 +138,7 @@ async fn send_lorawan_msg(
             println!("LoRaWAN network joined");
             let send_status = device.send(data, 1, false).await.unwrap();
             match send_status {
-                SendResponse::RxComplete => {
+                SendResponse::RxComplete | SendResponse::DownlinkReceived(0) => {
                     println!("LoRaWAN send succes");
                     unsafe {
                         SEED = seed;
@@ -152,14 +147,12 @@ async fn send_lorawan_msg(
                     }
                 }
                 _ => {
-                    println!("LoRaWAN send error, reset session");
+                    println!("LoRaWAN send error, reset session : {:?}", send_status);
                     unsafe {
                         IS_JOIN = false;
                     }
                 }
             }
-
-            delay.delay_millis(1000u32);
         } else {
             // Save state in RTC RAM
             unsafe {
@@ -180,6 +173,7 @@ async fn send_lorawan_msg(
                     Some(saved_session),
                 );
                 let send_status = device.send(data, 1, false).await.unwrap();
+                println!("send_status {:?}", send_status);
 
                 match send_status {
                     SendResponse::RxComplete => {
@@ -199,10 +193,7 @@ async fn send_lorawan_msg(
 /// Read vbatt from ADC2 GPIO1 and returns the value in mV
 /// Hardware gain is 0.5
 fn read_vbat(
-    mut adc2_pin: esp_hal::analog::adc::AdcPin<
-        GpioPin<gpio::Analog, 1>,
-        esp_hal::peripherals::ADC2,
-    >,
+    mut adc2_pin: esp_hal::analog::adc::AdcPin<GpioPin<1>, esp_hal::peripherals::ADC2>,
     mut adc2: Adc<esp_hal::peripherals::ADC2>,
 ) -> u16 {
     // Read vbat
@@ -212,12 +203,15 @@ fn read_vbat(
 
 /// Read hx7111
 fn hx7111_read_value(
-    hx711_dt: GpioPin<Input<Floating>, 21>,
-    hx711_sck: GpioPin<Output<esp_hal::gpio::PushPull>, 20>,
+    hx711_dt: GpioPin<21>,
+    hx711_sck: GpioPin<20>,
     delay: esp_hal::delay::Delay,
 ) -> u32 {
     let mut hx7111_value: u32 = 0;
-    let mut load_sensor = hx711::HX711::new(hx711_sck, hx711_dt, delay);
+    let io_hx711_dt = Input::new(hx711_dt, Pull::None);
+    let io_hx711_sck = Output::new(hx711_sck, Level::Low);
+
+    let mut load_sensor = hx711::HX711::new(io_hx711_sck, io_hx711_dt, delay);
     load_sensor.set_scale(1.0);
     //set the sensitivity/scale
     // load_sensor.tare(16);
@@ -251,13 +245,13 @@ async fn main(_spawner: Spawner) {
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut rtc = Rtc::new(peripherals.LPWR, None);
     let rng: Rng = Rng::new(peripherals.RNG);
-    embassy::init(&clocks, timg0);
+    esp_hal_embassy::init(&clocks, timg0);
     let dma: Dma = Dma::new(peripherals.DMA);
     let mut delay = esp_hal::delay::Delay::new(&clocks);
 
     println!("SW version 1.0.0");
     // Print wake or reset reason
-    // TODO send the reset reason to Lorax
+    // TODO send the reset reason to Lora
     let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
     println!("Reset reason: {:?}", reason);
     let wake_reason = get_wakeup_cause();
@@ -272,42 +266,34 @@ async fn main(_spawner: Spawner) {
     }
 
     // Enable HX711 and ADC power
-    let mut power_supply_enable = io.pins.gpio0.into_push_pull_output();
-    power_supply_enable.set_high();
+    Output::new(io.pins.gpio0, Level::High);
 
     // Read HX711 value
-    let raw_value: u32 = hx7111_read_value(
-        io.pins.gpio21.into_floating_input(),
-        io.pins.gpio20.into_push_pull_output(),
-        delay,
-    );
+    let hx711_raw_value: u32 = hx7111_read_value(io.pins.gpio21, io.pins.gpio20, delay);
 
     // Read vbat measure
-    let analog_pin = io.pins.gpio1.into_analog();
+    let analog_pin = io.pins.gpio1;
     let mut adc2_config = AdcConfig::new();
-    let adc2_pin: esp_hal::analog::adc::AdcPin<
-        GpioPin<gpio::Analog, 1>,
-        esp_hal::peripherals::ADC2,
-    > = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
+    let adc2_pin = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
     let adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(peripherals.ADC2, adc2_config);
     let vbat: u16 = read_vbat(adc2_pin, adc2);
     println!("ADC reading = {} mV", vbat);
 
     // Configure GPIO for SPI
-    let sclk: GpioPin<gpio::Unknown, 10> = io.pins.gpio10;
-    let miso: GpioPin<gpio::Unknown, 6> = io.pins.gpio6;
-    let mosi: GpioPin<gpio::Unknown, 7> = io.pins.gpio7;
-    let nss: GpioPin<Output<gpio::OpenDrain>, 8> = io.pins.gpio8.into_open_drain_output();
-    let reset: GpioPin<Output<gpio::OpenDrain>, 5> = io.pins.gpio5.into_open_drain_output();
-    let dio1: GpioPin<Input<gpio::PullDown>, 3> = io.pins.gpio3.into_pull_down_input();
-    let busy: GpioPin<Input<gpio::PullDown>, 4> = io.pins.gpio4.into_pull_down_input();
+    let sclk: GpioPin<10> = io.pins.gpio10;
+    let miso: GpioPin<6> = io.pins.gpio6;
+    let mosi: GpioPin<7> = io.pins.gpio7;
+    let nss: GpioPin<8> = io.pins.gpio8;
+    let reset: GpioPin<5> = io.pins.gpio5;
+    let dio1: GpioPin<3> = io.pins.gpio3;
+    let busy: GpioPin<4> = io.pins.gpio4;
 
     // Build Loraframe
     let mut lora_frame: [u8; 12] = [0; 12];
     lora_frame[1] = ((vbat - 3000) / 5) as u8;
-    lora_frame[2] = ((raw_value >> 24) & 0xFF) as u8;
-    lora_frame[3] = ((raw_value >> 16) & 0xFF) as u8;
-    lora_frame[4] = ((raw_value >> 8) & 0xFF) as u8;
+    lora_frame[2] = ((hx711_raw_value >> 24) & 0xFF) as u8;
+    lora_frame[3] = ((hx711_raw_value >> 16) & 0xFF) as u8;
+    lora_frame[4] = ((hx711_raw_value >> 8) & 0xFF) as u8;
 
     let spi_gpio = SpiGpio {
         sclk,
@@ -325,7 +311,6 @@ async fn main(_spawner: Spawner) {
         dma,
         rng,
         &clocks,
-        delay,
         spi_gpio,
         &mut lora_frame,
     )

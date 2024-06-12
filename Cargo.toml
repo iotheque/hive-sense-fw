@@ -14,19 +14,15 @@ esp-backtrace = { version = "0.11.0", features = [
     "defmt",
 ] }
 
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev="68a4fb29ed163f01107c0560caf2cc94325a1608", features = [
+esp-hal = { version = "0.18.0", features = [
   "async",
   "esp32c3",
-  "embassy",
-  "embassy-time-timg0",
-  "embassy-executor-thread",
-  "embassy-integrated-timers",
   "embedded-hal-02",
 ] }
 esp-println = { version = "0.9.0", features = ["esp32c3", "log", "defmt-espflash"] }
 
-lora-phy = { git = "https://github.com/pcurt/lora-rs.git", rev="0ffb792616fcd5d4d0733b216359bcea931003dd", features = ["lorawan-radio"]}
-lorawan-device = { git = "https://github.com/pcurt/lora-rs.git", rev="0ffb792616fcd5d4d0733b216359bcea931003dd", default-features = false, features = ["embassy-time", "default-crypto", "defmt"]}
+lora-phy = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", features = ["lorawan-radio"]}
+lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", default-features = false, features = ["embassy-time", "default-crypto", "defmt"]}
 embassy-executor =  { version = "0.5.0" }
 embassy-time =  { version = "0.3.0" }
 embassy-time-driver = { version = "0.1.0" }
@@ -40,7 +36,7 @@ embedded-hal-async = "1.0.0"
 defmt = "0.3"
 critical-section = "1.1.2"
 loadcell = "0.2.0"
-
+esp-hal-embassy = { version = "0.1.0", features = ["esp32c3", "time-timg0", "integrated-timers"] }
 [profile.dev]
 # Rust debug is too slow. 
 # For debug builds always builds with some optimization
