@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-
+mod cli;
 use embassy_executor::Spawner;
 use embassy_time::Delay;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -273,7 +273,7 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
 }
 
 #[main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     // Configure peripherals
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
@@ -357,6 +357,8 @@ async fn main(_spawner: Spawner) {
         busy,
     };
 
+    // Start the CLI task
+    spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
     // Send messsage on Lora network
     send_lorawan_msg(
         peripherals.SPI2,
@@ -369,7 +371,7 @@ async fn main(_spawner: Spawner) {
     .await;
 
     println!("End of cycle, go to sleep");
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(300));
-    delay.delay_millis(100u32);
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
+    Timer::after(Duration::from_millis(100)).await;
     rtc.sleep_deep(&[&timer], &mut delay);
 }

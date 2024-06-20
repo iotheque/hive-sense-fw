@@ -40,6 +40,12 @@ esp-wifi = { version = "0.6.0", features = [
     "phy-enable-usb",
 ] }
 heapless = { version = "0.8.0", default-features = false }
+embedded-cli = "0.2.1"
+embedded-io = "0.6.1"
+ufmt = "0.2.0"
+esp-storage = { version = "0.3.0", features = ["esp32c3"] }
+embedded-storage = "0.3.1"
+
 [profile.dev]
 # Rust debug is too slow. 
 # For debug builds always builds with some optimization
