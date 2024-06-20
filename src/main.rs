@@ -2,6 +2,7 @@
 #![no_main]
 mod cli;
 mod consts;
+use consts::{LORA_FRAME_SIZE_BYTES, MAX_TX_POWER};
 use embassy_executor::Spawner;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -46,12 +47,6 @@ use lorawan_device::{
     default_crypto::DefaultFactory as Crypto,
     mac::Session,
 };
-
-/// Lora Max TX power
-const MAX_TX_POWER: u8 = 14;
-
-/// Lora data fame size in bytes
-const LORA_FRAME_SIZE_BYTES: usize = 24;
 
 /// The following variables are stored in RTC RAM to keep their values
 /// after deep sleep
@@ -170,16 +165,12 @@ async fn send_lorawan_msg(
                 }
                 _ => {
                     println!("LoRaWAN send error, reset session : {:?}", send_status);
-                    unsafe {
-                        IS_JOIN = false;
-                    }
+                    unsafe { IS_JOIN = false };
                 }
             }
         } else {
             // Save state in RTC RAM
-            unsafe {
-                IS_JOIN = false;
-            }
+            unsafe { IS_JOIN = false };
             println!("CAN NOT join LoRaWAN network");
         }
     } else {
@@ -240,15 +231,14 @@ fn hx7111_read_value(
     // Wait HX711 to be ready
     for _ in 1..=10 {
         if load_sensor.is_ready() {
-            let reading = load_sensor.read_scaled();
-            match reading {
+            match load_sensor.read_scaled() {
                 Ok(x) => {
                     hx7111_value = x as u32;
+                    println!("HX711 reading = {:?}", x);
+                    break;
                 }
-                Err(_) => println!("Error reading HX711"),
+                Err(e) => println!("Error reading HX711: {:?}", e),
             }
-            println!("HX711 reading = {:?}", reading);
-            break;
         }
         delay.delay_millis(100u32);
         println!("Wait for HX711 available");
@@ -262,7 +252,6 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
     let (_, mut controller) = esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
     controller.start().unwrap();
     let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
-    println!("Result is {:?}", res);
     match res {
         Ok((access_points, count)) => {
             println!("Number of access points found: {}", count);
@@ -272,12 +261,7 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
                     "BSSID: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
                     ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]
                 );
-                out[i] = ap.bssid[0];
-                out[i + 1] = ap.bssid[1];
-                out[i + 2] = ap.bssid[2];
-                out[i + 3] = ap.bssid[3];
-                out[i + 4] = ap.bssid[4];
-                out[i + 5] = ap.bssid[5];
+                out[i..(6 + i)].copy_from_slice(&ap.bssid);
             }
         }
         Err(e) => {
@@ -313,8 +297,6 @@ async fn main(spawner: Spawner) {
         println!("BOOT_CNT {:x?}", BOOT_CNT);
         BOOT_CNT += 1;
         println!("IS_JOIN: {:?}", IS_JOIN);
-        println!("SAVED_SESSION: {:?}", SAVED_SESSION);
-        println!("SEED: {:x?}", SEED);
     }
 
     // Enable HX711 and ADC power
