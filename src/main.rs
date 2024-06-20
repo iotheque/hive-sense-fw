@@ -1,9 +1,11 @@
 #![no_std]
 #![no_main]
 mod cli;
+mod consts;
 use embassy_executor::Spawner;
-use embassy_time::Delay;
+use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_storage::ReadStorage;
 use esp_backtrace as _;
 use esp_hal::{
     analog::adc::{Adc, AdcConfig, Attenuation},
@@ -24,6 +26,7 @@ use esp_hal::{
     Cpu,
 };
 use esp_println::println;
+use esp_storage::FlashStorage;
 use esp_wifi::{
     initialize,
     wifi::{AccessPointInfo, WifiError, WifiStaDevice},
@@ -129,17 +132,28 @@ async fn send_lorawan_msg(
 
     if !is_join {
         println!("Ask to join lora network");
+        let mut flash = FlashStorage::new();
+        let mut dev_eui = [0u8; 8];
+        flash
+            .read(consts::NVS_DEV_EUI_ADDRESS, &mut dev_eui)
+            .unwrap();
+        let mut app_eui = [0u8; 8];
+        flash
+            .read(consts::NVS_APP_EUI_ADDRESS, &mut app_eui)
+            .unwrap();
+        let mut app_key = [0u8; 16];
+        flash
+            .read(consts::NVS_APP_KEY_ADDRESS, &mut app_key)
+            .unwrap();
+
         let seed = rng.random();
         let mut device: Device<_, Crypto, _, _> =
             Device::new_with_seed(region, radio, EmbassyTimer::new(), seed.into());
         let resp = device
             .join(&JoinMode::OTAA {
-                deveui: DevEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                appkey: AppKey::from([
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00,
-                ]),
+                deveui: DevEui::from(dev_eui),
+                appeui: AppEui::from(app_eui),
+                appkey: AppKey::from(app_key),
             })
             .await;
         if let Ok(JoinResponse::JoinSuccess) = resp {
@@ -359,7 +373,27 @@ async fn main(spawner: Spawner) {
 
     // Start the CLI task
     spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
-    // Send messsage on Lora network
+
+    // Check if OTAA has been setup
+    let mut flash = FlashStorage::new();
+    let mut app_key = [0u8; 16];
+    let mut otaa_is_set = false;
+    flash
+        .read(consts::NVS_APP_KEY_ADDRESS, &mut app_key)
+        .unwrap();
+    for &byte in app_key.iter() {
+        // Check if all bytes are to default value (255 for a flash)
+        if byte != 255 {
+            otaa_is_set = true;
+        }
+    }
+    if !otaa_is_set {
+        println!("LoraWan cretentials has not beeen set, please use cli to set them");
+        loop {
+            Timer::after(Duration::from_millis(100)).await;
+        }
+    }
+
     send_lorawan_msg(
         peripherals.SPI2,
         dma,
