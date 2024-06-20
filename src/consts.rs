@@ -1,0 +1,5 @@
+/// Define flaash NVS addresses
+pub const NVS_BASE_ADDRESS: u32 = 0x9000;
+pub const NVS_DEV_EUI_ADDRESS: u32 = NVS_BASE_ADDRESS; // SIZE OF 8
+pub const NVS_APP_EUI_ADDRESS: u32 = NVS_DEV_EUI_ADDRESS + 8; // SIZE OF 8
+pub const NVS_APP_KEY_ADDRESS: u32 = NVS_APP_EUI_ADDRESS + 8; // SIZE OF 16
