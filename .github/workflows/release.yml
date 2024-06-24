@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags:        
+      - v*
+
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install libudev-dev   
+      run: sudo apt-get install libudev-dev
+    - name: Install esp tools
+      run: cargo install espflash
+    - name: Build
+      run: cargo build --release
+    - name: Create bin
+      run: espflash save-image --chip esp32c3 target/riscv32imc-unknown-none-elf/release/hive-sense-fw hive-sense-fw.bin
+    - name: Create release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: hive-sense-fw.bin
