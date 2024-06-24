@@ -34,18 +34,19 @@ use esp_wifi::{
     EspWifiInitFor,
 };
 use loadcell::{hx711, LoadCell};
-use lora_phy::lorawan_radio::LorawanRadio;
-use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
-use lora_phy::LoRa;
-use lora_phy::{iv::GenericSx126xInterfaceVariant, sx126x::Sx1262};
-use lorawan_device::{
-    async_device::{region, Device, EmbassyTimer, JoinMode},
-    AppEui, AppKey, DevEui,
+use lora_phy::{
+    iv::GenericSx126xInterfaceVariant,
+    lorawan_radio::LorawanRadio,
+    sx126x::Sx1262,
+    sx126x::{self, Sx126x, TcxoCtrlVoltage},
+    LoRa,
 };
 use lorawan_device::{
+    async_device::{region, Device, EmbassyTimer, JoinMode},
     async_device::{JoinResponse, SendResponse},
     default_crypto::DefaultFactory as Crypto,
     mac::Session,
+    AppEui, AppKey, DevEui,
 };
 
 /// The following variables are stored in RTC RAM to keep their values
@@ -369,7 +370,7 @@ async fn main(spawner: Spawner) {
         }
     }
     if !otaa_is_set {
-        println!("LoraWan cretentials has not beeen set, please use cli to set them");
+        println!("LoraWan credentials has not beeen set, please use cli to set them");
         loop {
             Timer::after(Duration::from_millis(100)).await;
         }
@@ -390,7 +391,7 @@ async fn main(spawner: Spawner) {
     flash
         .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
         .unwrap();
-    let wake_period_s: u64 = 0; 
+    let wake_period_s: u64 = 0;
     println!("Next wakeup in {:?} s", wake_period_s);
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s));
     Timer::after(Duration::from_millis(100)).await;
