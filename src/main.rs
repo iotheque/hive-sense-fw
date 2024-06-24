@@ -1,9 +1,12 @@
 #![no_std]
 #![no_main]
-
+mod cli;
+mod consts;
+use consts::{LORA_FRAME_SIZE_BYTES, MAX_TX_POWER};
 use embassy_executor::Spawner;
-use embassy_time::Delay;
+use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_storage::ReadStorage;
 use esp_backtrace as _;
 use esp_hal::{
     analog::adc::{Adc, AdcConfig, Attenuation},
@@ -24,31 +27,27 @@ use esp_hal::{
     Cpu,
 };
 use esp_println::println;
+use esp_storage::FlashStorage;
 use esp_wifi::{
     initialize,
     wifi::{AccessPointInfo, WifiError, WifiStaDevice},
     EspWifiInitFor,
 };
 use loadcell::{hx711, LoadCell};
-use lora_phy::lorawan_radio::LorawanRadio;
-use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
-use lora_phy::LoRa;
-use lora_phy::{iv::GenericSx126xInterfaceVariant, sx126x::Sx1262};
-use lorawan_device::{
-    async_device::{region, Device, EmbassyTimer, JoinMode},
-    AppEui, AppKey, DevEui,
+use lora_phy::{
+    iv::GenericSx126xInterfaceVariant,
+    lorawan_radio::LorawanRadio,
+    sx126x::Sx1262,
+    sx126x::{self, Sx126x, TcxoCtrlVoltage},
+    LoRa,
 };
 use lorawan_device::{
+    async_device::{region, Device, EmbassyTimer, JoinMode},
     async_device::{JoinResponse, SendResponse},
     default_crypto::DefaultFactory as Crypto,
     mac::Session,
+    AppEui, AppKey, DevEui,
 };
-
-/// Lora Max TX power
-const MAX_TX_POWER: u8 = 14;
-
-/// Lora data fame size in bytes
-const LORA_FRAME_SIZE_BYTES: usize = 24;
 
 /// The following variables are stored in RTC RAM to keep their values
 /// after deep sleep
@@ -129,17 +128,28 @@ async fn send_lorawan_msg(
 
     if !is_join {
         println!("Ask to join lora network");
+        let mut flash = FlashStorage::new();
+        let mut dev_eui = [0u8; 8];
+        flash
+            .read(consts::NVS_DEV_EUI_ADDRESS, &mut dev_eui)
+            .unwrap();
+        let mut app_eui = [0u8; 8];
+        flash
+            .read(consts::NVS_APP_EUI_ADDRESS, &mut app_eui)
+            .unwrap();
+        let mut app_key = [0u8; 16];
+        flash
+            .read(consts::NVS_APP_KEY_ADDRESS, &mut app_key)
+            .unwrap();
+
         let seed = rng.random();
         let mut device: Device<_, Crypto, _, _> =
             Device::new_with_seed(region, radio, EmbassyTimer::new(), seed.into());
         let resp = device
             .join(&JoinMode::OTAA {
-                deveui: DevEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                appeui: AppEui::from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                appkey: AppKey::from([
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00,
-                ]),
+                deveui: DevEui::from(dev_eui),
+                appeui: AppEui::from(app_eui),
+                appkey: AppKey::from(app_key),
             })
             .await;
         if let Ok(JoinResponse::JoinSuccess) = resp {
@@ -156,17 +166,13 @@ async fn send_lorawan_msg(
                 }
                 _ => {
                     println!("LoRaWAN send error, reset session : {:?}", send_status);
-                    unsafe {
-                        IS_JOIN = false;
-                    }
+                    unsafe { IS_JOIN = false };
                 }
             }
         } else {
             // Save state in RTC RAM
-            unsafe {
-                IS_JOIN = false;
-            }
-            println!("CAN NOT join LoRaWAN network");
+            unsafe { IS_JOIN = false };
+            println!("CAN NOT join LoRaWAN network {:?}", resp);
         }
     } else {
         println!("We are already joined use saved session");
@@ -226,15 +232,14 @@ fn hx7111_read_value(
     // Wait HX711 to be ready
     for _ in 1..=10 {
         if load_sensor.is_ready() {
-            let reading = load_sensor.read_scaled();
-            match reading {
+            match load_sensor.read_scaled() {
                 Ok(x) => {
                     hx7111_value = x as u32;
+                    println!("HX711 reading = {:?}", x);
+                    break;
                 }
-                Err(_) => println!("Error reading HX711"),
+                Err(e) => println!("Error reading HX711: {:?}", e),
             }
-            println!("HX711 reading = {:?}", reading);
-            break;
         }
         delay.delay_millis(100u32);
         println!("Wait for HX711 available");
@@ -248,7 +253,6 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
     let (_, mut controller) = esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
     controller.start().unwrap();
     let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
-    println!("Result is {:?}", res);
     match res {
         Ok((access_points, count)) => {
             println!("Number of access points found: {}", count);
@@ -258,12 +262,7 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
                     "BSSID: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
                     ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]
                 );
-                out[i] = ap.bssid[0];
-                out[i + 1] = ap.bssid[1];
-                out[i + 2] = ap.bssid[2];
-                out[i + 3] = ap.bssid[3];
-                out[i + 4] = ap.bssid[4];
-                out[i + 5] = ap.bssid[5];
+                out[i..(6 + i)].copy_from_slice(&ap.bssid);
             }
         }
         Err(e) => {
@@ -273,7 +272,7 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
 }
 
 #[main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     // Configure peripherals
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
@@ -288,7 +287,6 @@ async fn main(_spawner: Spawner) {
     let mut delay = esp_hal::delay::Delay::new(&clocks);
 
     println!("SW version {:?}", env!("CARGO_PKG_VERSION"));
-    // Print wake or reset reason
     // TODO send the reset reason to Lora
     let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
     println!("Reset reason: {:?}", reason);
@@ -299,8 +297,6 @@ async fn main(_spawner: Spawner) {
         println!("BOOT_CNT {:x?}", BOOT_CNT);
         BOOT_CNT += 1;
         println!("IS_JOIN: {:?}", IS_JOIN);
-        println!("SAVED_SESSION: {:?}", SAVED_SESSION);
-        println!("SEED: {:x?}", SEED);
     }
 
     // Enable HX711 and ADC power
@@ -357,7 +353,29 @@ async fn main(_spawner: Spawner) {
         busy,
     };
 
-    // Send messsage on Lora network
+    // Start the CLI task
+    spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
+
+    // Check if OTAA has been setup
+    let mut flash = FlashStorage::new();
+    let mut app_key = [0u8; 16];
+    let mut otaa_is_set = false;
+    flash
+        .read(consts::NVS_APP_KEY_ADDRESS, &mut app_key)
+        .unwrap();
+    for &byte in app_key.iter() {
+        // Check if all bytes are to default value (255 for a flash)
+        if byte != 255 {
+            otaa_is_set = true;
+        }
+    }
+    if !otaa_is_set {
+        println!("LoraWan credentials has not beeen set, please use cli to set them");
+        loop {
+            Timer::after(Duration::from_millis(100)).await;
+        }
+    }
+
     send_lorawan_msg(
         peripherals.SPI2,
         dma,
@@ -369,7 +387,13 @@ async fn main(_spawner: Spawner) {
     .await;
 
     println!("End of cycle, go to sleep");
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(300));
-    delay.delay_millis(100u32);
+    let mut wake_period_raw = [0u8; 2];
+    flash
+        .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
+        .unwrap();
+    let wake_period_s: u64 = 0;
+    println!("Next wakeup in {:?} s", wake_period_s);
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s));
+    Timer::after(Duration::from_millis(100)).await;
     rtc.sleep_deep(&[&timer], &mut delay);
 }
