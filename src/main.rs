@@ -171,7 +171,7 @@ async fn send_lorawan_msg(
         } else {
             // Save state in RTC RAM
             unsafe { IS_JOIN = false };
-            println!("CAN NOT join LoRaWAN network");
+            println!("CAN NOT join LoRaWAN network {:?}", resp);
         }
     } else {
         println!("We are already joined use saved session");
@@ -286,7 +286,6 @@ async fn main(spawner: Spawner) {
     let mut delay = esp_hal::delay::Delay::new(&clocks);
 
     println!("SW version {:?}", env!("CARGO_PKG_VERSION"));
-    // Print wake or reset reason
     // TODO send the reset reason to Lora
     let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
     println!("Reset reason: {:?}", reason);
@@ -387,7 +386,13 @@ async fn main(spawner: Spawner) {
     .await;
 
     println!("End of cycle, go to sleep");
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(10));
+    let mut wake_period_raw = [0u8; 2];
+    flash
+        .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
+        .unwrap();
+    let wake_period_s: u64 = 0; 
+    println!("Next wakeup in {:?} s", wake_period_s);
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s));
     Timer::after(Duration::from_millis(100)).await;
     rtc.sleep_deep(&[&timer], &mut delay);
 }

@@ -1,7 +1,9 @@
 //mod consts;
 use core::convert::Infallible;
 
-use crate::consts::{NVS_APP_EUI_ADDRESS, NVS_APP_KEY_ADDRESS, NVS_DEV_EUI_ADDRESS};
+use crate::consts::{
+    NVS_APP_EUI_ADDRESS, NVS_APP_KEY_ADDRESS, NVS_DEV_EUI_ADDRESS, NVS_WAKEUP_PERIOD_ADDRESS,
+};
 use embassy_time::{Duration, Timer};
 use embedded_cli::cli::CliBuilder;
 use embedded_cli::Command;
@@ -30,6 +32,12 @@ enum Base<'a> {
         command: AppKeyCommand<'a>,
     },
 
+    /// Configure wakeup period in seconds
+    WakeUp {
+        #[command(subcommand)]
+        command: WakeUpCommand,
+    },
+
     /// Reset the system
     Reset,
 }
@@ -55,6 +63,18 @@ enum AppKeyCommand<'a> {
     Set {
         /// AppKey value
         value: &'a str,
+    },
+}
+
+#[derive(Debug, Command)]
+enum WakeUpCommand {
+    /// Get current WakeUp value
+    Get,
+
+    /// Set WakeUp value
+    Set {
+        /// WakeUp value in seconds
+        value: u16,
     },
 }
 
@@ -188,6 +208,27 @@ pub async fn cli_run(usb_periph: USB_DEVICE) {
                                         "Set AppKey is {:?}",
                                         otaa_to_hex_bytes(value)
                                     )?;
+                                }
+                            }
+                        }
+                        Base::WakeUp { command } => {
+                            let mut raw_value = [0u8; 2];
+                            match command {
+                                WakeUpCommand::Get => {
+                                    flash
+                                        .read(NVS_WAKEUP_PERIOD_ADDRESS, &mut raw_value)
+                                        .unwrap();
+                                    uwrite!(
+                                        cli.writer(),
+                                        "Current WakeUp is {:?}",
+                                        u16::from_be_bytes(raw_value)
+                                    )?;
+                                }
+                                WakeUpCommand::Set { value } => {
+                                    flash
+                                        .write(NVS_WAKEUP_PERIOD_ADDRESS, &value.to_be_bytes())
+                                        .unwrap();
+                                    uwrite!(cli.writer(), "Set WakeUp is {:?}", value)?;
                                 }
                             }
                         }
