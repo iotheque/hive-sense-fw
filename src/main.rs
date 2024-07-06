@@ -26,7 +26,6 @@ use esp_hal::{
     timer::{systimer::SystemTimer, timg::TimerGroup},
     Cpu,
 };
-use esp_println::println;
 use esp_storage::FlashStorage;
 use esp_wifi::{
     initialize,
@@ -127,7 +126,7 @@ async fn send_lorawan_msg(
     }
 
     if !is_join {
-        println!("Ask to join lora network");
+        log::info!("Ask to join lora network");
         let mut flash = FlashStorage::new();
         let mut dev_eui = [0u8; 8];
         flash
@@ -153,11 +152,11 @@ async fn send_lorawan_msg(
             })
             .await;
         if let Ok(JoinResponse::JoinSuccess) = resp {
-            println!("LoRaWAN network joined");
+            log::info!("LoRaWAN network joined");
             let send_status = device.send(data, 1, false).await.unwrap();
             match send_status {
                 SendResponse::RxComplete | SendResponse::DownlinkReceived(0) => {
-                    println!("LoRaWAN send succes");
+                    log::info!("LoRaWAN send succes");
                     unsafe {
                         SEED = seed;
                         IS_JOIN = true;
@@ -165,17 +164,17 @@ async fn send_lorawan_msg(
                     }
                 }
                 _ => {
-                    println!("LoRaWAN send error, reset session : {:?}", send_status);
+                    log::error!("LoRaWAN send error, reset session : {:?}", send_status);
                     unsafe { IS_JOIN = false };
                 }
             }
         } else {
             // Save state in RTC RAM
             unsafe { IS_JOIN = false };
-            println!("CAN NOT join LoRaWAN network {:?}", resp);
+            log::info!("CAN NOT join LoRaWAN network {:?}", resp);
         }
     } else {
-        println!("We are already joined use saved session");
+        log::info!("We are already joined use saved session");
         unsafe {
             let seed: u32 = SEED;
             if let Some(saved_session) = SAVED_SESSION.clone() {
@@ -187,15 +186,15 @@ async fn send_lorawan_msg(
                     Some(saved_session),
                 );
                 let send_status = device.send(data, 1, false).await.unwrap();
-                println!("send_status {:?}", send_status);
+                log::debug!("send_status {:?}", send_status);
 
                 match send_status {
                     SendResponse::RxComplete => {
-                        println!("LoRaWAN send succes");
+                        log::info!("LoRaWAN send succes");
                         SAVED_SESSION = device.get_session().cloned();
                     }
                     _ => {
-                        println!("LoRaWAN send error, reset session");
+                        log::error!("LoRaWAN send error, reset session");
                         IS_JOIN = false;
                     }
                 }
@@ -235,14 +234,14 @@ fn hx7111_read_value(
             match load_sensor.read_scaled() {
                 Ok(x) => {
                     hx7111_value = x as u32;
-                    println!("HX711 reading = {:?}", x);
+                    log::info!("HX711 reading = {:?}", x);
                     break;
                 }
-                Err(e) => println!("Error reading HX711: {:?}", e),
+                Err(e) => log::error!("Error reading HX711: {:?}", e),
             }
         }
         delay.delay_millis(100u32);
-        println!("Wait for HX711 available");
+        log::debug!("Wait for HX711 available");
     }
 
     hx7111_value
@@ -255,18 +254,23 @@ fn scan_wifi(init: esp_wifi::EspWifiInitialization, wifi: WIFI, out: &mut [u8]) 
     let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
     match res {
         Ok((access_points, count)) => {
-            println!("Number of access points found: {}", count);
+            log::info!("Number of access points found: {}", count);
             for (i, ap) in access_points.iter().enumerate().take(2) {
-                println!("SSID: {}", ap.ssid);
-                println!(
+                log::info!("SSID: {}", ap.ssid);
+                log::info!(
                     "BSSID: {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-                    ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]
+                    ap.bssid[0],
+                    ap.bssid[1],
+                    ap.bssid[2],
+                    ap.bssid[3],
+                    ap.bssid[4],
+                    ap.bssid[5]
                 );
                 out[i..(6 + i)].copy_from_slice(&ap.bssid);
             }
         }
         Err(e) => {
-            println!("Failed to scan WiFi: {:?}", e);
+            log::error!("Failed to scan WiFi: {:?}", e);
         }
     }
 }
@@ -286,17 +290,20 @@ async fn main(spawner: Spawner) {
     let dma: Dma = Dma::new(peripherals.DMA);
     let mut delay = esp_hal::delay::Delay::new(&clocks);
 
-    println!("SW version {:?}", env!("CARGO_PKG_VERSION"));
+    // Create the logger
+    esp_println::logger::init_logger_from_env();
+
+    log::info!("SW version {:?}", env!("CARGO_PKG_VERSION"));
     // TODO send the reset reason to Lora
     let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
-    println!("Reset reason: {:?}", reason);
+    log::info!("Reset reason: {:?}", reason);
     let wake_reason = get_wakeup_cause();
-    println!("Wake reason: {:?}", wake_reason);
+    log::info!("Wake reason: {:?}", wake_reason);
 
     unsafe {
-        println!("BOOT_CNT {:x?}", BOOT_CNT);
+        log::info!("BOOT_CNT {:x?}", BOOT_CNT);
         BOOT_CNT += 1;
-        println!("IS_JOIN: {:?}", IS_JOIN);
+        log::debug!("IS_JOIN: {:?}", IS_JOIN);
     }
 
     // Enable HX711 and ADC power
@@ -311,7 +318,7 @@ async fn main(spawner: Spawner) {
     let adc2_pin = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
     let adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(peripherals.ADC2, adc2_config);
     let vbat: u16 = read_vbat(adc2_pin, adc2);
-    println!("ADC reading = {} mV", vbat);
+    log::info!("ADC reading = {} mV", vbat);
 
     // Wifi Init
     let wifi_timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
@@ -370,7 +377,7 @@ async fn main(spawner: Spawner) {
         }
     }
     if !otaa_is_set {
-        println!("LoraWan credentials has not beeen set, please use cli to set them");
+        log::info!("LoraWan credentials has not beeen set, please use cli to set them");
         loop {
             Timer::after(Duration::from_millis(100)).await;
         }
@@ -386,12 +393,14 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    println!("End of cycle, go to sleep");
+    log::info!("End of cycle, go to sleep");
     let mut wake_period_raw = [0u8; 2];
     flash
         .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
         .unwrap();
     let wake_period_s: u16 = u16::from_le_bytes(wake_period_raw);
+
+    log::info!("Next wakeup in {:?} s", wake_period_s);
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s.into()));
     Timer::after(Duration::from_millis(100)).await;
     rtc.sleep_deep(&[&timer], &mut delay);

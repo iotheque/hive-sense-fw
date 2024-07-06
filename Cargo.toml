@@ -9,14 +9,15 @@ license = "MIT OR Apache-2.0"
 esp-backtrace = { version = "0.12.1", features = [
     "esp32c3",
     "panic-handler",
-    "defmt",
+    "println",
 ] }
 
 esp-hal = { version = "0.18.0", features = ["async", "esp32c3", "embedded-hal-02"] }
-esp-println = { version = "0.9.0", features = ["esp32c3", "log", "defmt-espflash"] }
+esp-println = { version = "0.9.1", features = ["esp32c3", "log"] }
+log = { version = "0.4.21" }
 
 lora-phy = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", features = ["lorawan-radio"]}
-lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", default-features = false, features = ["embassy-time", "default-crypto", "defmt"]}
+lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", default-features = false, features = ["embassy-time", "default-crypto"]}
 embassy-executor =  { version = "0.5.0" }
 embassy-time =  { version = "0.3.0" }
 embassy-time-driver = { version = "0.1.0" }

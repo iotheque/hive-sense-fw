@@ -543,7 +543,6 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5b1720f2275eb87dbde9607cb2ab6a10894a4502045c0924c0f265aaceb3118"
 dependencies = [
- "defmt",
  "esp-build",
  "esp-println",
  "rustversion",
@@ -656,7 +655,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e98f0f58453dd2ce08d99228fc8757fad39d05dfd26643665d1093b8844f42cc"
 dependencies = [
  "critical-section",
- "defmt",
  "log",
 ]
 
@@ -916,6 +914,7 @@ dependencies = [
  "fugit",
  "heapless 0.8.0",
  "loadcell",
+ "log",
  "lora-phy",
  "lorawan-device",
  "ufmt",
