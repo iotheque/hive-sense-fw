@@ -391,9 +391,8 @@ async fn main(spawner: Spawner) {
     flash
         .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
         .unwrap();
-    let wake_period_s: u64 = 0;
-    println!("Next wakeup in {:?} s", wake_period_s);
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s));
+    let wake_period_s: u16 = u16::from_le_bytes(wake_period_raw);
+    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s.into()));
     Timer::after(Duration::from_millis(100)).await;
     rtc.sleep_deep(&[&timer], &mut delay);
 }
