@@ -2,6 +2,7 @@
 #![no_main]
 mod cli;
 mod consts;
+mod cycle;
 mod lora;
 mod sensors;
 mod wifi;
@@ -10,7 +11,6 @@ use cycle::{cycle_end, cycle_start};
 use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
-use embedded_storage::ReadStorage;
 use esp_backtrace as _;
 use esp_hal::{
     clock::ClockControl,
@@ -19,12 +19,10 @@ use esp_hal::{
     peripherals::Peripherals,
     prelude::*,
     rng::Rng,
-    rtc_cntl::{get_reset_reason, get_wakeup_cause, sleep::TimerWakeupSource, Rtc, SocResetReason},
+    rtc_cntl::Rtc,
     system::SystemControl,
     timer::{systimer::SystemTimer, timg::TimerGroup},
-    Cpu,
 };
-use esp_storage::FlashStorage;
 use esp_wifi::{initialize, EspWifiInitFor};
 use lora::{lorawan_build_msg, lorawan_otaa_is_configured};
 use lorawan_device::mac::Session;
@@ -67,7 +65,7 @@ async fn main(spawner: Spawner) {
     let clocks = ClockControl::max(system.clock_control).freeze();
     let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let mut rtc = Rtc::new(peripherals.LPWR, None);
+    let rtc = Rtc::new(peripherals.LPWR, None);
     let rng: Rng = Rng::new(peripherals.RNG);
     esp_hal_embassy::init(&clocks, timg0);
     let wifi = peripherals.WIFI;
@@ -77,18 +75,7 @@ async fn main(spawner: Spawner) {
     // Create the logger
     esp_println::logger::init_logger_from_env();
 
-    log::info!("SW version {:?}", env!("CARGO_PKG_VERSION"));
-    // TODO send the reset reason to Lora
-    let reason = get_reset_reason(Cpu::ProCpu).unwrap_or(SocResetReason::ChipPowerOn);
-    log::info!("Reset reason: {:?}", reason);
-    let wake_reason = get_wakeup_cause();
-    log::info!("Wake reason: {:?}", wake_reason);
-
-    unsafe {
-        log::info!("BOOT_CNT {:x?}", BOOT_CNT);
-        BOOT_CNT += 1;
-        log::debug!("IS_JOIN: {:?}", IS_JOIN);
-    }
+    cycle_start();
 
     // Enable HX711 and ADC power
     Output::new(io.pins.gpio0, Level::High);
@@ -164,16 +151,5 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    log::info!("End of cycle, go to sleep");
-    let mut wake_period_raw = [0u8; 2];
-    let mut flash = FlashStorage::new();
-    flash
-        .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
-        .unwrap();
-    let wake_period_s: u16 = u16::from_le_bytes(wake_period_raw);
-
-    log::info!("Next wakeup in {:?} s", wake_period_s);
-    let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s.into()));
-    Timer::after(Duration::from_millis(100)).await;
-    rtc.sleep_deep(&[&timer], &mut delay);
+    cycle_end(rtc, &mut delay).await;
 }
