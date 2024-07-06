@@ -8,6 +8,13 @@ pub const NVS_WAKEUP_PERIOD_ADDRESS: u32 = NVS_APP_KEY_ADDRESS + 16; // SIZE OF 
 /// Lora Max TX power
 pub const MAX_TX_POWER: u8 = 14;
 
+/// Size of a BSSID in a Lora frame in bytes
+pub const BSSID_ITEM_SIZE: usize = 6;
+/// Number of BSSID send to Lora
+pub const BSSID_ITEM_NUMBER: usize = 3;
+/// Total BSSIDs field size on Lora frame in bytes
+pub const BSSIDS_TOTAL_SIZE: usize = BSSID_ITEM_NUMBER * BSSID_ITEM_SIZE;
+
 /// Lora data fame size in bytes
 /// Fields (bytes)
 /// - [0] device id
@@ -33,4 +40,4 @@ pub const MAX_TX_POWER: u8 = 14;
 /// - [20] BSSID number 3
 /// - [21] BSSID number 3
 /// - [22] BSSID number 3
-pub const LORA_FRAME_SIZE_BYTES: usize = 24;
+pub const LORA_FRAME_SIZE_BYTES: usize = 23;

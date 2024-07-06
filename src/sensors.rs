@@ -1,16 +1,18 @@
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use esp_hal::{
-    analog::adc::Adc,
+    analog::adc::{Adc, AdcConfig, Attenuation},
     gpio::{GpioPin, Input, Level, Output, Pull},
     prelude::nb,
 };
 use loadcell::{hx711, LoadCell};
 
-/// Read hx7111
-pub fn hx7111_read_value(
+#[embassy_executor::task]
+pub async fn hx7111_read_value(
     hx711_dt: GpioPin<21>,
     hx711_sck: GpioPin<20>,
     delay: esp_hal::delay::Delay,
-) -> u32 {
+    signal: &'static Signal<CriticalSectionRawMutex, u32>,
+) {
     let mut hx7111_value: u32 = 0;
     let io_hx711_dt = Input::new(hx711_dt, Pull::None);
     let io_hx711_sck = Output::new(hx711_sck, Level::Low);
@@ -35,16 +37,23 @@ pub fn hx7111_read_value(
         log::debug!("Wait for HX711 available");
     }
 
-    hx7111_value
+    signal.signal(hx7111_value);
 }
 
-/// Read vbatt from ADC2 GPIO1 and returns the value in mV
-/// Hardware gain is 0.5
-pub fn read_vbat(
-    mut adc2_pin: esp_hal::analog::adc::AdcPin<GpioPin<1>, esp_hal::peripherals::ADC2>,
-    mut adc2: Adc<esp_hal::peripherals::ADC2>,
-) -> u16 {
-    // Read vbat
+#[embassy_executor::task]
+pub async fn read_vbat(
+    analog_pin: GpioPin<1>,
+    adc2_periph: esp_hal::peripherals::ADC2,
+    signal: &'static Signal<CriticalSectionRawMutex, u16>,
+) {
+    let mut adc2_config = AdcConfig::new();
+    let mut adc2_pin = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
+    let mut adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(adc2_periph, adc2_config);
+
+    // Read vbatt from ADC2 GPIO1 and returns the value in mV
+    // Hardware gain is 0.5
     let raw_value: u16 = nb::block!(adc2.read_oneshot(&mut adc2_pin)).unwrap();
-    raw_value * 2
+    let vbat = raw_value * 2;
+    log::info!("ADC reading = {} mV", vbat);
+    signal.signal(vbat);
 }

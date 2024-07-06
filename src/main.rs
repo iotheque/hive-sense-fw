@@ -5,13 +5,14 @@ mod consts;
 mod lora;
 mod sensors;
 mod wifi;
-use consts::LORA_FRAME_SIZE_BYTES;
+use consts::BSSIDS_TOTAL_SIZE;
+use cycle::{cycle_end, cycle_start};
 use embassy_executor::Spawner;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
 use embedded_storage::ReadStorage;
 use esp_backtrace as _;
 use esp_hal::{
-    analog::adc::{Adc, AdcConfig, Attenuation},
     clock::ClockControl,
     dma::*,
     gpio::{GpioPin, Io, Level, Output},
@@ -25,6 +26,7 @@ use esp_hal::{
 };
 use esp_storage::FlashStorage;
 use esp_wifi::{initialize, EspWifiInitFor};
+use lora::{lorawan_build_msg, lorawan_otaa_is_configured};
 use lorawan_device::mac::Session;
 
 /// The following variables are stored in RTC RAM to keep their values
@@ -48,6 +50,14 @@ struct SpiGpio {
     dio1: GpioPin<3>,
     busy: GpioPin<4>,
 }
+
+// Signals used to synchonize embassy tasks and get data
+static WIFI_END_SIGN: Signal<CriticalSectionRawMutex, [u8; BSSIDS_TOTAL_SIZE]> =
+    Signal::<CriticalSectionRawMutex, [u8; BSSIDS_TOTAL_SIZE]>::new();
+static VBATT_END_SIGN: Signal<CriticalSectionRawMutex, u16> =
+    Signal::<CriticalSectionRawMutex, u16>::new();
+static HX711_END_SIGN: Signal<CriticalSectionRawMutex, u32> =
+    Signal::<CriticalSectionRawMutex, u32>::new();
 
 #[main]
 async fn main(spawner: Spawner) {
@@ -83,20 +93,9 @@ async fn main(spawner: Spawner) {
     // Enable HX711 and ADC power
     Output::new(io.pins.gpio0, Level::High);
 
-    // Read HX711 value
-    let hx711_raw_value: u32 = sensors::hx7111_read_value(io.pins.gpio21, io.pins.gpio20, delay);
-
-    // Read vbat measure
-    let analog_pin = io.pins.gpio1;
-    let mut adc2_config = AdcConfig::new();
-    let adc2_pin = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
-    let adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(peripherals.ADC2, adc2_config);
-    let vbat: u16 = sensors::read_vbat(adc2_pin, adc2);
-    log::info!("ADC reading = {} mV", vbat);
-
-    // Wifi Init
+    // Wifi Init peripheral
     let wifi_timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
-    let init = initialize(
+    let wifi_handler = initialize(
         EspWifiInitFor::Wifi,
         wifi_timer,
         rng,
@@ -105,52 +104,50 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
-    // Configure GPIO for SPI
-    let sclk: GpioPin<10> = io.pins.gpio10;
-    let miso: GpioPin<6> = io.pins.gpio6;
-    let mosi: GpioPin<7> = io.pins.gpio7;
-    let nss: GpioPin<8> = io.pins.gpio8;
-    let reset: GpioPin<5> = io.pins.gpio5;
-    let dio1: GpioPin<3> = io.pins.gpio3;
-    let busy: GpioPin<4> = io.pins.gpio4;
-
-    // Build Loraframe
-    let mut lora_frame: [u8; LORA_FRAME_SIZE_BYTES] = [0; LORA_FRAME_SIZE_BYTES];
-    lora_frame[1] = ((vbat - 3000) / 5) as u8;
-    lora_frame[2] = ((hx711_raw_value >> 24) & 0xFF) as u8;
-    lora_frame[3] = ((hx711_raw_value >> 16) & 0xFF) as u8;
-    lora_frame[4] = ((hx711_raw_value >> 8) & 0xFF) as u8;
-
-    // Scan wifi and add to the two strongest signals to Loraframe
-    wifi::scan_wifi(init, wifi, &mut lora_frame[6..]);
-
-    let spi_gpio = SpiGpio {
-        sclk,
-        miso,
-        mosi,
-        nss,
-        reset,
-        dio1,
-        busy,
-    };
-
     // Start the CLI task
     spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
 
+    // Start tasks that gather all data
+    spawner
+        .spawn(wifi::scan_wifi(wifi_handler, wifi, &WIFI_END_SIGN))
+        .ok();
+    spawner
+        .spawn(sensors::read_vbat(
+            io.pins.gpio1,
+            peripherals.ADC2,
+            &VBATT_END_SIGN,
+        ))
+        .ok();
+    spawner
+        .spawn(sensors::hx7111_read_value(
+            io.pins.gpio21,
+            io.pins.gpio20,
+            delay,
+            &HX711_END_SIGN,
+        ))
+        .ok();
+
+    // Wait for all needed data
+    let wifi_data: [u8; BSSIDS_TOTAL_SIZE] = WIFI_END_SIGN.wait().await;
+    let vbat: u16 = VBATT_END_SIGN.wait().await;
+    let hx711_raw_value: u32 = HX711_END_SIGN.wait().await;
+
+    // Build Loraframe
+    let mut lora_frame = lorawan_build_msg(vbat, hx711_raw_value, wifi_data);
+
+    // Configure GPIO for SPI
+    let spi_gpio = SpiGpio {
+        sclk: io.pins.gpio10,
+        miso: io.pins.gpio6,
+        mosi: io.pins.gpio7,
+        nss: io.pins.gpio8,
+        reset: io.pins.gpio5,
+        dio1: io.pins.gpio3,
+        busy: io.pins.gpio4,
+    };
+
     // Check if OTAA has been setup
-    let mut flash = FlashStorage::new();
-    let mut app_key = [0u8; 16];
-    let mut otaa_is_set = false;
-    flash
-        .read(consts::NVS_APP_KEY_ADDRESS, &mut app_key)
-        .unwrap();
-    for &byte in app_key.iter() {
-        // Check if all bytes are to default value (255 for a flash)
-        if byte != 255 {
-            otaa_is_set = true;
-        }
-    }
-    if !otaa_is_set {
+    if !lorawan_otaa_is_configured() {
         log::info!("LoraWan credentials has not beeen set, please use cli to set them");
         loop {
             Timer::after(Duration::from_millis(100)).await;
@@ -169,6 +166,7 @@ async fn main(spawner: Spawner) {
 
     log::info!("End of cycle, go to sleep");
     let mut wake_period_raw = [0u8; 2];
+    let mut flash = FlashStorage::new();
     flash
         .read(consts::NVS_WAKEUP_PERIOD_ADDRESS, &mut wake_period_raw)
         .unwrap();

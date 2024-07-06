@@ -29,8 +29,8 @@ use lorawan_device::{
 
 use crate::{
     consts::{
-        LORA_FRAME_SIZE_BYTES, MAX_TX_POWER, NVS_APP_EUI_ADDRESS, NVS_APP_KEY_ADDRESS,
-        NVS_DEV_EUI_ADDRESS,
+        self, BSSIDS_TOTAL_SIZE, LORA_FRAME_SIZE_BYTES, MAX_TX_POWER, NVS_APP_EUI_ADDRESS,
+        NVS_APP_KEY_ADDRESS, NVS_DEV_EUI_ADDRESS,
     },
     SpiGpio, IS_JOIN, SAVED_SESSION, SEED,
 };
@@ -160,4 +160,41 @@ pub async fn send_lorawan_msg(
             }
         }
     }
+}
+
+pub fn lorawan_build_msg(
+    vbat: u16,
+    hx711_raw_value: u32,
+    wifi_data: [u8; BSSIDS_TOTAL_SIZE],
+) -> [u8; LORA_FRAME_SIZE_BYTES] {
+    let mut lora_frame: [u8; LORA_FRAME_SIZE_BYTES] = [0; LORA_FRAME_SIZE_BYTES];
+    if vbat <= 3000 {
+        lora_frame[1] = 0;
+    } else {
+        lora_frame[1] = ((vbat - 3000) / 5) as u8;
+    }
+    lora_frame[2] = ((hx711_raw_value >> 24) & 0xFF) as u8;
+    lora_frame[3] = ((hx711_raw_value >> 16) & 0xFF) as u8;
+    lora_frame[4] = ((hx711_raw_value >> 8) & 0xFF) as u8;
+    lora_frame[5..].copy_from_slice(&wifi_data);
+
+    log::info!("LoraWan Frame is {:?}", lora_frame);
+
+    lora_frame
+}
+
+pub fn lorawan_otaa_is_configured() -> bool {
+    let mut flash = FlashStorage::new();
+    let mut app_key = [0u8; 16];
+    let mut otaa_is_set = false;
+    flash
+        .read(consts::NVS_APP_KEY_ADDRESS, &mut app_key)
+        .unwrap();
+    for &byte in app_key.iter() {
+        // Check if all bytes are to default value (255 for a flash)
+        if byte != 255 {
+            otaa_is_set = true;
+        }
+    }
+    otaa_is_set
 }
