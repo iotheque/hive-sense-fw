@@ -7,7 +7,9 @@ use embassy_time::{Duration, Timer};
 use embedded_cli::cli::{CliBuilder, CliHandle};
 use embedded_cli::Command;
 use embedded_storage::{ReadStorage, Storage};
-use esp_hal::{peripherals::USB_DEVICE, reset::software_reset, usb_serial_jtag::UsbSerialJtag};
+use esp_hal::{
+    efuse::Efuse, peripherals::USB_DEVICE, reset::software_reset, usb_serial_jtag::UsbSerialJtag,
+};
 use esp_storage::FlashStorage;
 use ufmt::uwrite;
 
@@ -41,6 +43,9 @@ enum Base<'a> {
         #[command(subcommand)]
         command: WakeUpCommand,
     },
+
+    /// Get the device MAC address
+    GetMac,
 
     /// Reset the system
     Reset,
@@ -207,6 +212,17 @@ fn handle_wakeup_command(
     Ok(())
 }
 
+fn handle_get_mac_command(cli: &mut CliHandle<'_, Writer, Infallible>) -> Result<(), Infallible> {
+    let mac: [u8; 6] = Efuse::get_mac_address();
+
+    uwrite!(cli.writer(), "Chip Mac address: ").unwrap();
+    for &element in &mac {
+        uwrite!(cli.writer(), "{:x}", element).unwrap();
+    }
+
+    Ok(())
+}
+
 fn handle_reset_command(cli: &mut CliHandle<'_, Writer, Infallible>) -> Result<(), Infallible> {
     uwrite!(cli.writer(), "Reset now !")?;
     software_reset();
@@ -261,6 +277,7 @@ pub async fn cli_run(usb_periph: USB_DEVICE) {
                             NVS_WAKEUP_PERIOD_ADDRESS,
                             command,
                         ),
+                        Base::GetMac => handle_get_mac_command(cli),
                         Base::Reset => handle_reset_command(cli),
                     };
                     Ok(())
