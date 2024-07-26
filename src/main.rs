@@ -91,9 +91,6 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
-    // Start the CLI task
-    spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
-
     // Start tasks that gather all data
     spawner
         .spawn(wifi::scan_wifi(wifi_handler, wifi, &WIFI_END_SIGN))
@@ -114,6 +111,17 @@ async fn main(spawner: Spawner) {
         ))
         .ok();
 
+    // Check if OTAA has been setup
+    if !lorawan_otaa_is_configured() {
+        // Start the CLI task
+        spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
+
+        log::info!("LoraWan credentials has not beeen set, please use cli to set them");
+        loop {
+            Timer::after(Duration::from_millis(100)).await;
+        }
+    }
+
     // Wait for all needed data
     let wifi_data: [u8; BSSIDS_TOTAL_SIZE] = WIFI_END_SIGN.wait().await;
     let vbat: u16 = VBATT_END_SIGN.wait().await;
@@ -132,14 +140,6 @@ async fn main(spawner: Spawner) {
         dio1: io.pins.gpio3,
         busy: io.pins.gpio4,
     };
-
-    // Check if OTAA has been setup
-    if !lorawan_otaa_is_configured() {
-        log::info!("LoraWan credentials has not beeen set, please use cli to set them");
-        loop {
-            Timer::after(Duration::from_millis(100)).await;
-        }
-    }
 
     lora::send_lorawan_msg(
         peripherals.SPI2,
