@@ -47,7 +47,7 @@ pub async fn send_lorawan_msg(
     data: &mut [u8; LORA_FRAME_SIZE_BYTES],
 ) {
     let dma_channel = dma.channel0;
-    let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
+    let (descriptors, rx_descriptors) = dma_descriptors!(32000);
 
     let mut spi_bus = Spi::new(spi2, 200u32.kHz(), SpiMode::Mode0, clocks)
         .with_pins(
@@ -56,12 +56,11 @@ pub async fn send_lorawan_msg(
             Some(spi_gpio.miso),
             gpio::NO_PIN,
         )
-        .with_dma(dma_channel.configure_for_async(
-            false,
-            &mut descriptors,
-            &mut rx_descriptors,
-            DmaPriority::Priority0,
-        ));
+        .with_dma(
+            dma_channel.configure_for_async(false, DmaPriority::Priority0),
+            descriptors,
+            rx_descriptors,
+        );
     let spi = ExclusiveDevice::new(&mut spi_bus, Output::new(spi_gpio.nss, Level::High), Delay);
 
     // Configure Sx1262 chip

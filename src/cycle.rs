@@ -21,7 +21,7 @@ pub fn cycle_start() {
     }
 }
 
-pub async fn cycle_end(mut rtc: Rtc<'_>, delay: &mut esp_hal::delay::Delay) {
+pub async fn cycle_end(mut rtc: Rtc<'_>) {
     log::info!("End of cycle, go to sleep");
     let mut wake_period_raw = [0u8; 2];
     let mut flash = FlashStorage::new();
@@ -33,5 +33,5 @@ pub async fn cycle_end(mut rtc: Rtc<'_>, delay: &mut esp_hal::delay::Delay) {
     log::info!("Next wakeup in {:?} s", wake_period_s);
     let timer = TimerWakeupSource::new(core::time::Duration::from_secs(wake_period_s.into()));
     Timer::after(Duration::from_millis(100)).await;
-    rtc.sleep_deep(&[&timer], delay);
+    rtc.sleep_deep(&[&timer]);
 }

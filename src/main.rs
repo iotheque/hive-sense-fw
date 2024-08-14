@@ -21,11 +21,21 @@ use esp_hal::{
     rng::Rng,
     rtc_cntl::Rtc,
     system::SystemControl,
-    timer::timg::TimerGroup,
+    timer::{timg::TimerGroup, ErasedTimer, OneShotTimer, PeriodicTimer},
 };
 use esp_wifi::{initialize, EspWifiInitFor};
 use lora::{lorawan_build_msg, lorawan_otaa_is_configured};
 use lorawan_device::mac::Session;
+
+// When you are okay with using a nightly compiler it's better to use https://docs.rs/static_cell/2.1.0/static_cell/macro.make_static.html
+macro_rules! mk_static {
+    ($t:ty,$val:expr) => {{
+        static STATIC_CELL: static_cell::StaticCell<$t> = static_cell::StaticCell::new();
+        #[deny(unused_attributes)]
+        let x = STATIC_CELL.uninit().write(($val));
+        x
+    }};
+}
 
 /// The following variables are stored in RTC RAM to keep their values
 /// after deep sleep
@@ -63,14 +73,17 @@ async fn main(spawner: Spawner) {
     let peripherals = Peripherals::take();
     let system = SystemControl::new(peripherals.SYSTEM);
     let clocks = ClockControl::max(system.clock_control).freeze();
-    let timg0 = TimerGroup::new_async(peripherals.TIMG0, &clocks);
+    let timg0 = TimerGroup::new(peripherals.TIMG0, &clocks, None);
+    let timer0 = OneShotTimer::new(timg0.timer0.into());
+    let timers = [timer0];
+    let timers = mk_static!([OneShotTimer<ErasedTimer>; 1], timers);
+    esp_hal_embassy::init(&clocks, timers);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
     let rtc = Rtc::new(peripherals.LPWR, None);
     let rng: Rng = Rng::new(peripherals.RNG);
-    esp_hal_embassy::init(&clocks, timg0);
     let wifi = peripherals.WIFI;
     let dma: Dma = Dma::new(peripherals.DMA);
-    let mut delay = esp_hal::delay::Delay::new(&clocks);
+    let delay = esp_hal::delay::Delay::new(&clocks);
 
     // Create the logger
     esp_println::logger::init_logger_from_env();
@@ -81,7 +94,11 @@ async fn main(spawner: Spawner) {
     Output::new(io.pins.gpio0, Level::High);
 
     // Wifi Init peripheral
-    let wifi_timer = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1, &clocks, None).timer0;
+    let wifi_timer = PeriodicTimer::new(
+        esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1, &clocks, None)
+            .timer1
+            .into(),
+    );
     let wifi_handler = initialize(
         EspWifiInitFor::Wifi,
         wifi_timer,
@@ -151,5 +168,5 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
-    cycle_end(rtc, &mut delay).await;
+    cycle_end(rtc).await;
 }
