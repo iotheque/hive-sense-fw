@@ -7,13 +7,13 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 esp-backtrace = { version = "0.12.1", features = [
-    "esp32c3",
+    "esp32s3",
     "panic-handler",
     "println",
 ] }
 
-esp-hal = { version = "0.18.0", features = ["async", "esp32c3", "embedded-hal-02"] }
-esp-println = { version = "0.9.1", features = ["esp32c3", "log"] }
+esp-hal = { version = "0.18.0", features = ["async", "esp32s3", "embedded-hal-02"] }
+esp-println = { version = "0.9.1", features = ["esp32s3", "log"] }
 log = { version = "0.4.21" }
 
 lora-phy = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", features = ["lorawan-radio"]}
@@ -31,9 +31,9 @@ embedded-hal-async = "1.0.0"
 defmt = "0.3.8"
 critical-section = "1.1.2"
 loadcell = "0.2.0"
-esp-hal-embassy = { version = "0.1.0", features = ["esp32c3", "time-timg0", "integrated-timers"] }
+esp-hal-embassy = { version = "0.1.0", features = ["esp32s3", "time-timg0", "integrated-timers"] }
 esp-wifi = { version = "0.6.0", features = [
-    "esp32c3",
+    "esp32s3",
     "wifi-default",
     "utils",
     "phy-enable-usb",
@@ -42,7 +42,7 @@ heapless = { version = "0.8.0", default-features = false }
 embedded-cli = "0.2.1"
 embedded-io = "0.6.1"
 ufmt = "0.2.0"
-esp-storage = { version = "0.3.0", features = ["esp32c3"] }
+esp-storage = { version = "0.3.0", features = ["esp32s3"] }
 embedded-storage = "0.3.1"
 embassy-sync = "0.6.0"
 

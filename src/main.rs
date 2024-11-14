@@ -21,7 +21,7 @@ use esp_hal::{
     rng::Rng,
     rtc_cntl::Rtc,
     system::SystemControl,
-    timer::{systimer::SystemTimer, timg::TimerGroup},
+    timer::timg::TimerGroup,
 };
 use esp_wifi::{initialize, EspWifiInitFor};
 use lora::{lorawan_build_msg, lorawan_otaa_is_configured};
@@ -40,13 +40,13 @@ static mut SAVED_SESSION: Option<Session> = None;
 
 // All GPIO needed for SPI
 struct SpiGpio {
-    sclk: GpioPin<10>,
+    sclk: GpioPin<7>,
     miso: GpioPin<6>,
-    mosi: GpioPin<7>,
-    nss: GpioPin<8>,
-    reset: GpioPin<5>,
-    dio1: GpioPin<3>,
-    busy: GpioPin<4>,
+    mosi: GpioPin<5>,
+    nss: GpioPin<16>,
+    reset: GpioPin<8>,
+    dio1: GpioPin<18>,
+    busy: GpioPin<15>,
 }
 
 // Signals used to synchonize embassy tasks and get data
@@ -81,7 +81,7 @@ async fn main(spawner: Spawner) {
     Output::new(io.pins.gpio0, Level::High);
 
     // Wifi Init peripheral
-    let wifi_timer = SystemTimer::new(peripherals.SYSTIMER).alarm0;
+    let wifi_timer = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG1, &clocks, None).timer0;
     let wifi_handler = initialize(
         EspWifiInitFor::Wifi,
         wifi_timer,
@@ -104,8 +104,8 @@ async fn main(spawner: Spawner) {
         .ok();
     spawner
         .spawn(sensors::hx7111_read_value(
-            io.pins.gpio21,
-            io.pins.gpio20,
+            io.pins.gpio39,
+            io.pins.gpio38,
             delay,
             &HX711_END_SIGN,
         ))
@@ -132,13 +132,13 @@ async fn main(spawner: Spawner) {
 
     // Configure GPIO for SPI
     let spi_gpio = SpiGpio {
-        sclk: io.pins.gpio10,
+        sclk: io.pins.gpio7,
         miso: io.pins.gpio6,
-        mosi: io.pins.gpio7,
-        nss: io.pins.gpio8,
-        reset: io.pins.gpio5,
-        dio1: io.pins.gpio3,
-        busy: io.pins.gpio4,
+        mosi: io.pins.gpio5,
+        nss: io.pins.gpio16,
+        reset: io.pins.gpio8,
+        dio1: io.pins.gpio18,
+        busy: io.pins.gpio15,
     };
 
     lora::send_lorawan_msg(

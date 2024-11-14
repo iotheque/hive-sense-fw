@@ -8,8 +8,8 @@ use loadcell::{hx711, LoadCell};
 
 #[embassy_executor::task]
 pub async fn hx7111_read_value(
-    hx711_dt: GpioPin<21>,
-    hx711_sck: GpioPin<20>,
+    hx711_dt: GpioPin<39>,
+    hx711_sck: GpioPin<38>,
     delay: esp_hal::delay::Delay,
     signal: &'static Signal<CriticalSectionRawMutex, u32>,
 ) {
