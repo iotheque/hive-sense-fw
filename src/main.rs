@@ -15,7 +15,7 @@ use esp_backtrace as _;
 use esp_hal::{
     clock::ClockControl,
     dma::*,
-    gpio::{GpioPin, Io, Level, Output},
+    gpio::{AnyInput, AnyOutput, GpioPin, Io, Level, Output, Pull},
     peripherals::Peripherals,
     prelude::*,
     rng::Rng,
@@ -64,7 +64,9 @@ static WIFI_END_SIGN: Signal<CriticalSectionRawMutex, [u8; BSSIDS_TOTAL_SIZE]> =
     Signal::<CriticalSectionRawMutex, [u8; BSSIDS_TOTAL_SIZE]>::new();
 static VBATT_END_SIGN: Signal<CriticalSectionRawMutex, u16> =
     Signal::<CriticalSectionRawMutex, u16>::new();
-static HX711_END_SIGN: Signal<CriticalSectionRawMutex, u32> =
+static HX711_END_SIGN_1: Signal<CriticalSectionRawMutex, u32> =
+    Signal::<CriticalSectionRawMutex, u32>::new();
+static HX711_END_SIGN_2: Signal<CriticalSectionRawMutex, u32> =
     Signal::<CriticalSectionRawMutex, u32>::new();
 
 #[main]
@@ -119,12 +121,26 @@ async fn main(spawner: Spawner) {
             &VBATT_END_SIGN,
         ))
         .ok();
+    // HX711 on J6
+    let hx711_dt_1 = AnyInput::new(io.pins.gpio39, Pull::None);
+    let io_hx711_sck_1 = AnyOutput::new(io.pins.gpio38, Level::Low);
     spawner
-        .spawn(sensors::hx7111_read_value(
-            io.pins.gpio39,
-            io.pins.gpio38,
+        .spawn(sensors::hx7111_read_value_1(
+            hx711_dt_1,
+            io_hx711_sck_1,
             delay,
-            &HX711_END_SIGN,
+            &HX711_END_SIGN_1,
+        ))
+        .ok();
+    // HX711 on J5
+    let hx711_dt_2 = AnyInput::new(io.pins.gpio43, Pull::None);
+    let io_hx711_sck_2 = AnyOutput::new(io.pins.gpio44, Level::Low);
+    spawner
+        .spawn(sensors::hx7111_read_value_2(
+            hx711_dt_2,
+            io_hx711_sck_2,
+            delay,
+            &HX711_END_SIGN_2,
         ))
         .ok();
 
@@ -142,10 +158,14 @@ async fn main(spawner: Spawner) {
     // Wait for all needed data
     let wifi_data: [u8; BSSIDS_TOTAL_SIZE] = WIFI_END_SIGN.wait().await;
     let vbat: u16 = VBATT_END_SIGN.wait().await;
-    let hx711_raw_value: u32 = HX711_END_SIGN.wait().await;
+    let hx711_raw_value_1: u32 = HX711_END_SIGN_1.wait().await;
+    let hx711_raw_value_2: u32 = HX711_END_SIGN_2.wait().await;
+
+    log::info!("hx711_raw_value_1 {:?}", hx711_raw_value_1);
+    log::info!("hx711_raw_value_2 {:?}", hx711_raw_value_2);
 
     // Build Loraframe
-    let mut lora_frame = lorawan_build_msg(vbat, hx711_raw_value, wifi_data);
+    let mut lora_frame = lorawan_build_msg(vbat, hx711_raw_value_1, wifi_data);
 
     // Configure GPIO for SPI
     let spi_gpio = SpiGpio {

@@ -163,7 +163,7 @@ pub async fn send_lorawan_msg(
 
 pub fn lorawan_build_msg(
     vbat: u16,
-    hx711_raw_value: u32,
+    mut hx711_raw_value: u32,
     wifi_data: [u8; BSSIDS_TOTAL_SIZE],
 ) -> [u8; LORA_FRAME_SIZE_BYTES] {
     let mut lora_frame: [u8; LORA_FRAME_SIZE_BYTES] = [0; LORA_FRAME_SIZE_BYTES];
@@ -172,9 +172,12 @@ pub fn lorawan_build_msg(
     } else {
         lora_frame[1] = ((vbat - 3000) / 5) as u8;
     }
-    lora_frame[2] = ((hx711_raw_value >> 24) & 0xFF) as u8;
-    lora_frame[3] = ((hx711_raw_value >> 16) & 0xFF) as u8;
-    lora_frame[4] = ((hx711_raw_value >> 8) & 0xFF) as u8;
+    if hx711_raw_value > 0xFFFFFF {
+        hx711_raw_value = 0xFFFFFF;
+    }
+    lora_frame[2] = ((hx711_raw_value >> 16) & 0xFF) as u8;
+    lora_frame[3] = ((hx711_raw_value >> 8) & 0xFF) as u8;
+    lora_frame[4] = ((hx711_raw_value) & 0xFF) as u8;
     lora_frame[5..].copy_from_slice(&wifi_data);
 
     log::info!("LoraWan Frame is {:?}", lora_frame);

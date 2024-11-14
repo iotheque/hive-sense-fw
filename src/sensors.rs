@@ -1,43 +1,71 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_time::{Duration, Timer};
 use esp_hal::{
     analog::adc::{Adc, AdcConfig, Attenuation},
-    gpio::{GpioPin, Input, Level, Output, Pull},
+    gpio::{AnyInput, AnyOutput, GpioPin},
     prelude::nb,
 };
 use loadcell::{hx711, LoadCell};
 
-#[embassy_executor::task]
-pub async fn hx7111_read_value(
-    hx711_dt: GpioPin<39>,
-    hx711_sck: GpioPin<38>,
+const HX711_TARE: f32 = 198000.0;
+
+async fn hx7111_read_value(
+    hx711_dt: AnyInput<'static>,
+    hx711_sck: AnyOutput<'static>,
     delay: esp_hal::delay::Delay,
     signal: &'static Signal<CriticalSectionRawMutex, u32>,
 ) {
     let mut hx7111_value: u32 = 0;
-    let io_hx711_dt = Input::new(hx711_dt, Pull::None);
-    let io_hx711_sck = Output::new(hx711_sck, Level::Low);
-
-    let mut load_sensor = hx711::HX711::new(io_hx711_sck, io_hx711_dt, delay);
+    let mut load_sensor = hx711::HX711::new(hx711_sck, hx711_dt, delay);
     load_sensor.set_scale(1.0);
-    //set the sensitivity/scale
-    // load_sensor.tare(16);
     // Wait HX711 to be ready
-    for _ in 1..=10 {
+    // Try 20 reads, get the third successful read
+    let mut hx711_read_cnt: u8 = 0;
+    for _ in 1..=20 {
         if load_sensor.is_ready() {
             match load_sensor.read_scaled() {
                 Ok(x) => {
-                    hx7111_value = x as u32;
-                    log::info!("HX711 reading = {:?}", x);
-                    break;
+                    hx711_read_cnt += 1;
+                    if hx711_read_cnt > 3 {
+                        log::info!("HX711 raw reading = {:?}", x);
+                        if x > HX711_TARE {
+                            hx7111_value = (x - HX711_TARE) as u32;
+                        } else {
+                            hx7111_value = 0;
+                        }
+                        log::info!("HX711 reading = {:?}", hx7111_value);
+                        break;
+                    }
                 }
                 Err(e) => log::error!("Error reading HX711: {:?}", e),
             }
         }
-        delay.delay_millis(100u32);
-        log::debug!("Wait for HX711 available");
+        Timer::after(Duration::from_millis(50)).await;
+        log::info!("Wait for HX711 available");
     }
-
     signal.signal(hx7111_value);
+}
+
+#[embassy_executor::task]
+pub async fn hx7111_read_value_1(
+    hx711_dt: AnyInput<'static>,
+    hx711_sck: AnyOutput<'static>,
+    delay: esp_hal::delay::Delay,
+    signal: &'static Signal<CriticalSectionRawMutex, u32>,
+) {
+    log::info!("HX7111 number 1");
+    hx7111_read_value(hx711_dt, hx711_sck, delay, signal).await;
+}
+
+#[embassy_executor::task]
+pub async fn hx7111_read_value_2(
+    hx711_dt: AnyInput<'static>,
+    hx711_sck: AnyOutput<'static>,
+    delay: esp_hal::delay::Delay,
+    signal: &'static Signal<CriticalSectionRawMutex, u32>,
+) {
+    log::info!("HX7111 number 2");
+    hx7111_read_value(hx711_dt, hx711_sck, delay, signal).await;
 }
 
 #[embassy_executor::task]
