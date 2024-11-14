@@ -91,7 +91,7 @@ async fn main(spawner: Spawner) {
     cycle_start();
 
     // Enable HX711 and ADC power
-    Output::new(io.pins.gpio0, Level::High);
+    Output::new(io.pins.gpio2, Level::High);
 
     // Wifi Init peripheral
     let wifi_timer = PeriodicTimer::new(
@@ -115,7 +115,7 @@ async fn main(spawner: Spawner) {
     spawner
         .spawn(sensors::read_vbat(
             io.pins.gpio1,
-            peripherals.ADC2,
+            peripherals.ADC1,
             &VBATT_END_SIGN,
         ))
         .ok();

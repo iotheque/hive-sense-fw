@@ -43,17 +43,25 @@ pub async fn hx7111_read_value(
 #[embassy_executor::task]
 pub async fn read_vbat(
     analog_pin: GpioPin<1>,
-    adc2_periph: esp_hal::peripherals::ADC2,
+    adc1_periph: esp_hal::peripherals::ADC1,
     signal: &'static Signal<CriticalSectionRawMutex, u16>,
 ) {
-    let mut adc2_config = AdcConfig::new();
-    let mut adc2_pin = adc2_config.enable_pin(analog_pin, Attenuation::Attenuation11dB);
-    let mut adc2: Adc<esp_hal::peripherals::ADC2> = Adc::new(adc2_periph, adc2_config);
+    type AdcCal = esp_hal::analog::adc::AdcCalBasic<esp_hal::peripherals::ADC1>;
+    let mut adc1_config = AdcConfig::new();
+    let mut adc1_pin =
+        adc1_config.enable_pin_with_cal::<_, AdcCal>(analog_pin, Attenuation::Attenuation11dB);
+    let mut adc1 = Adc::new(adc1_periph, adc1_config);
 
     // Read vbatt from ADC2 GPIO1 and returns the value in mV
-    // Hardware gain is 0.5
-    let raw_value: u16 = nb::block!(adc2.read_oneshot(&mut adc2_pin)).unwrap();
-    let vbat = raw_value * 2;
-    log::info!("ADC reading = {} mV", vbat);
+    // Hardware gain is 56/156
+    let mut raw_value: u32 = 0;
+    for _ in 0..=10 {
+        let read = nb::block!(adc1.read_oneshot(&mut adc1_pin)).unwrap();
+        raw_value += read as u32;
+        Timer::after(Duration::from_millis(50)).await;
+    }
+
+    let vbat = (raw_value * 156 / 56 / 10) as u16;
+    log::info!("Battery voltage = {} mV", vbat);
     signal.signal(vbat);
 }
