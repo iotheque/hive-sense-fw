@@ -1,18 +1,21 @@
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer};
+use embedded_storage::ReadStorage;
 use esp_hal::{
     analog::adc::{Adc, AdcConfig, Attenuation},
     gpio::{AnyInput, AnyOutput, GpioPin},
     prelude::nb,
 };
+use esp_storage::FlashStorage;
 use loadcell::{hx711, LoadCell};
 
-const HX711_TARE: f32 = 198000.0;
+use crate::consts::{NVS_HX711_1_TARE_VALUE, NVS_HX711_2_TARE_VALUE};
 
 async fn hx7111_read_value(
     hx711_dt: AnyInput<'static>,
     hx711_sck: AnyOutput<'static>,
     delay: esp_hal::delay::Delay,
+    tare: f32,
     signal: &'static Signal<CriticalSectionRawMutex, u32>,
 ) {
     let mut hx7111_value: u32 = 0;
@@ -28,8 +31,8 @@ async fn hx7111_read_value(
                     hx711_read_cnt += 1;
                     if hx711_read_cnt > 3 {
                         log::info!("HX711 raw reading = {:?}", x);
-                        if x > HX711_TARE {
-                            hx7111_value = (x - HX711_TARE) as u32;
+                        if x > tare {
+                            hx7111_value = (x - tare) as u32;
                         } else {
                             hx7111_value = 0;
                         }
@@ -54,7 +57,14 @@ pub async fn hx7111_read_value_1(
     signal: &'static Signal<CriticalSectionRawMutex, u32>,
 ) {
     log::info!("HX7111 number 1");
-    hx7111_read_value(hx711_dt, hx711_sck, delay, signal).await;
+    let mut raw_value = [0u8; 4];
+    let mut flash = FlashStorage::new();
+    flash.read(NVS_HX711_1_TARE_VALUE, &mut raw_value).unwrap();
+    let mut tare: u32 = u32::from_be_bytes(raw_value);
+    if tare == 0xFFFF_FFFF {
+        tare = 0;
+    }
+    hx7111_read_value(hx711_dt, hx711_sck, delay, tare as f32, signal).await;
 }
 
 #[embassy_executor::task]
@@ -65,7 +75,14 @@ pub async fn hx7111_read_value_2(
     signal: &'static Signal<CriticalSectionRawMutex, u32>,
 ) {
     log::info!("HX7111 number 2");
-    hx7111_read_value(hx711_dt, hx711_sck, delay, signal).await;
+    let mut raw_value = [0u8; 4];
+    let mut flash = FlashStorage::new();
+    flash.read(NVS_HX711_2_TARE_VALUE, &mut raw_value).unwrap();
+    let mut tare: u32 = u32::from_be_bytes(raw_value);
+    if tare == 0xFFFF_FFFF {
+        tare = 0;
+    }
+    hx7111_read_value(hx711_dt, hx711_sck, delay, tare as f32, signal).await;
 }
 
 #[embassy_executor::task]

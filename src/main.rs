@@ -144,10 +144,22 @@ async fn main(spawner: Spawner) {
         ))
         .ok();
 
+    // Get the HX711 values before starting the cli
+    let hx711_raw_value_1: u32 = HX711_END_SIGN_1.wait().await;
+    let hx711_raw_value_2: u32 = HX711_END_SIGN_2.wait().await;
+    log::info!("hx711_raw_value_1 {:?}", hx711_raw_value_1);
+    log::info!("hx711_raw_value_2 {:?}", hx711_raw_value_2);
+
     // Check if OTAA has been setup
     if !lorawan_otaa_is_configured() {
         // Start the CLI task
-        spawner.spawn(cli::cli_run(peripherals.USB_DEVICE)).ok();
+        spawner
+            .spawn(cli::cli_run(
+                peripherals.USB_DEVICE,
+                hx711_raw_value_1,
+                hx711_raw_value_2,
+            ))
+            .ok();
 
         log::info!("LoraWan credentials has not beeen set, please use cli to set them");
         loop {
@@ -158,11 +170,6 @@ async fn main(spawner: Spawner) {
     // Wait for all needed data
     let wifi_data: [u8; BSSIDS_TOTAL_SIZE] = WIFI_END_SIGN.wait().await;
     let vbat: u16 = VBATT_END_SIGN.wait().await;
-    let hx711_raw_value_1: u32 = HX711_END_SIGN_1.wait().await;
-    let hx711_raw_value_2: u32 = HX711_END_SIGN_2.wait().await;
-
-    log::info!("hx711_raw_value_1 {:?}", hx711_raw_value_1);
-    log::info!("hx711_raw_value_2 {:?}", hx711_raw_value_2);
 
     // Build Loraframe
     let mut lora_frame = lorawan_build_msg(vbat, hx711_raw_value_1, wifi_data);

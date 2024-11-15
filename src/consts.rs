@@ -1,9 +1,11 @@
-/// Define flaash NVS addresses
+/// Define flash NVS addresses
 pub const NVS_BASE_ADDRESS: u32 = 0x9000;
 pub const NVS_DEV_EUI_ADDRESS: u32 = NVS_BASE_ADDRESS; // SIZE OF 8
 pub const NVS_APP_EUI_ADDRESS: u32 = NVS_DEV_EUI_ADDRESS + 8; // SIZE OF 8
 pub const NVS_APP_KEY_ADDRESS: u32 = NVS_APP_EUI_ADDRESS + 8; // SIZE OF 16
 pub const NVS_WAKEUP_PERIOD_ADDRESS: u32 = NVS_APP_KEY_ADDRESS + 16; // SIZE OF 32
+pub const NVS_HX711_1_TARE_VALUE: u32 = NVS_WAKEUP_PERIOD_ADDRESS + 32; // SIZE OF 32
+pub const NVS_HX711_2_TARE_VALUE: u32 = NVS_HX711_1_TARE_VALUE + 32; // SIZE OF 32
 
 /// Lora Max TX power
 pub const MAX_TX_POWER: u8 = 14;

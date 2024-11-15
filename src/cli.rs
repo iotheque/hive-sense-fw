@@ -1,7 +1,8 @@
 use core::convert::Infallible;
 
 use crate::consts::{
-    NVS_APP_EUI_ADDRESS, NVS_APP_KEY_ADDRESS, NVS_DEV_EUI_ADDRESS, NVS_WAKEUP_PERIOD_ADDRESS,
+    NVS_APP_EUI_ADDRESS, NVS_APP_KEY_ADDRESS, NVS_DEV_EUI_ADDRESS, NVS_HX711_1_TARE_VALUE,
+    NVS_HX711_2_TARE_VALUE, NVS_WAKEUP_PERIOD_ADDRESS,
 };
 use embassy_time::{Duration, Timer};
 use embedded_cli::cli::{CliBuilder, CliHandle};
@@ -49,6 +50,12 @@ enum Base<'a> {
 
     /// Reset the system
     Reset,
+
+    /// Set and get HX711s tare
+    Tare {
+        #[command(subcommand)]
+        command: SetTareCommand,
+    },
 }
 
 #[derive(Debug, Command)]
@@ -85,6 +92,15 @@ enum WakeUpCommand {
         /// WakeUp value in seconds
         value: u16,
     },
+}
+
+#[derive(Debug, Command)]
+enum SetTareCommand {
+    /// Get tare values
+    Get,
+
+    /// Set tare values
+    Set,
 }
 
 /// Wrapper around usart so we can impl embedded_io::Write
@@ -229,8 +245,53 @@ fn handle_reset_command(cli: &mut CliHandle<'_, Writer, Infallible>) -> Result<(
     Ok(())
 }
 
+fn handle_tare_command(
+    cli: &mut CliHandle<'_, Writer, Infallible>,
+    flash: &mut FlashStorage,
+    hx711_1_address: u32,
+    hx711_2_address: u32,
+    hx711_raw_value_1: u32,
+    hx711_raw_value_2: u32,
+    command: SetTareCommand,
+) -> Result<(), Infallible> {
+    match command {
+        SetTareCommand::Get => {
+            let mut raw_value = [0u8; 4];
+
+            flash.read(hx711_1_address, &mut raw_value).unwrap();
+            uwrite!(
+                cli.writer(),
+                "Current tare for HX711_1={:?} ",
+                u32::from_be_bytes(raw_value)
+            )?;
+
+            flash.read(hx711_2_address, &mut raw_value).unwrap();
+            uwrite!(
+                cli.writer(),
+                "Current tare for HX711_2={:?}",
+                u32::from_be_bytes(raw_value)
+            )?;
+        }
+        SetTareCommand::Set => {
+            flash
+                .write(hx711_1_address, &hx711_raw_value_1.to_be_bytes())
+                .unwrap();
+            flash
+                .write(hx711_2_address, &hx711_raw_value_2.to_be_bytes())
+                .unwrap();
+            uwrite!(
+                cli.writer(),
+                "Update tare values : hx711_raw_value_1={:?}, hx711_raw_value_2={:?}",
+                hx711_raw_value_1,
+                hx711_raw_value_2
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[embassy_executor::task]
-pub async fn cli_run(usb_periph: USB_DEVICE) {
+pub async fn cli_run(usb_periph: USB_DEVICE, hx711_raw_value_1: u32, hx711_raw_value_2: u32) {
     let usb_serial: UsbSerialJtag<esp_hal::Blocking> = UsbSerialJtag::new(usb_periph, None);
     let (tx, mut rx) = usb_serial.split();
     let writer = Writer(tx);
@@ -275,6 +336,15 @@ pub async fn cli_run(usb_periph: USB_DEVICE) {
                             cli,
                             &mut flash,
                             NVS_WAKEUP_PERIOD_ADDRESS,
+                            command,
+                        ),
+                        Base::Tare { command } => handle_tare_command(
+                            cli,
+                            &mut flash,
+                            NVS_HX711_1_TARE_VALUE,
+                            NVS_HX711_2_TARE_VALUE,
+                            hx711_raw_value_1,
+                            hx711_raw_value_2,
                             command,
                         ),
                         Base::GetMac => handle_get_mac_command(cli),
