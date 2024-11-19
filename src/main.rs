@@ -93,7 +93,9 @@ async fn main(spawner: Spawner) {
     cycle_start();
 
     // Enable HX711 and ADC power
-    Output::new(io.pins.gpio2, Level::High);
+    let mut pwr_ctrl = Output::new(io.pins.gpio2, Level::Low);
+    delay.delay_millis(10);
+    pwr_ctrl.set_high();
 
     // Wifi Init peripheral
     let wifi_timer = PeriodicTimer::new(
@@ -124,6 +126,7 @@ async fn main(spawner: Spawner) {
     // HX711 on J6
     let hx711_dt_1 = AnyInput::new(io.pins.gpio39, Pull::None);
     let io_hx711_sck_1 = AnyOutput::new(io.pins.gpio38, Level::Low);
+    delay.delay_millis(100);
     spawner
         .spawn(sensors::hx7111_read_value_1(
             hx711_dt_1,
@@ -135,6 +138,7 @@ async fn main(spawner: Spawner) {
     // HX711 on J5
     let hx711_dt_2 = AnyInput::new(io.pins.gpio43, Pull::None);
     let io_hx711_sck_2 = AnyOutput::new(io.pins.gpio44, Level::Low);
+    delay.delay_millis(100);
     spawner
         .spawn(sensors::hx7111_read_value_2(
             hx711_dt_2,
@@ -195,5 +199,6 @@ async fn main(spawner: Spawner) {
     )
     .await;
 
+    pwr_ctrl.set_low();
     cycle_end(rtc).await;
 }
