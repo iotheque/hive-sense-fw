@@ -1,18 +1,21 @@
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::Delay;
-use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_storage::ReadStorage;
 use esp_hal::{
     clock::Clocks,
-    dma::{Dma, DmaPriority},
+    dma::{self, Dma, DmaPriority},
     dma_descriptors,
     gpio::{self, AnyInput, AnyOutput, Level, Output, Pull},
     peripherals::SPI2,
     prelude::*,
     rng::Rng,
     spi::{
-        master::{prelude::*, Spi},
-        SpiMode,
+        master::{dma::SpiDma, prelude::*, Spi},
+        FullDuplexMode, SpiMode,
     },
+    Async,
 };
 use esp_storage::FlashStorage;
 use lora_phy::{
@@ -26,6 +29,7 @@ use lorawan_device::{
     default_crypto::DefaultFactory as Crypto,
     region, AppEui, AppKey, DevEui, JoinMode,
 };
+use static_cell::StaticCell;
 
 use crate::{
     consts::{
@@ -49,7 +53,7 @@ pub async fn send_lorawan_msg(
     let dma_channel = dma.channel0;
     let (descriptors, rx_descriptors) = dma_descriptors!(32000);
 
-    let mut spi_bus = Spi::new(spi2, 200u32.kHz(), SpiMode::Mode0, clocks)
+    let spi = Spi::new(spi2, 200u32.kHz(), SpiMode::Mode0, clocks)
         .with_pins(
             Some(spi_gpio.sclk),
             Some(spi_gpio.mosi),
@@ -61,7 +65,14 @@ pub async fn send_lorawan_msg(
             descriptors,
             rx_descriptors,
         );
-    let spi = ExclusiveDevice::new(&mut spi_bus, Output::new(spi_gpio.nss, Level::High), Delay);
+
+    static SPI_BUS: StaticCell<
+        Mutex<NoopRawMutex, SpiDma<'_, SPI2, dma::Channel0, FullDuplexMode, Async>>,
+    > = StaticCell::new();
+    let spi_bus = Mutex::new(spi);
+    let spi_bus = SPI_BUS.init(spi_bus);
+    let cs = Output::new(spi_gpio.nss, Level::High);
+    let spi_dev1 = SpiDevice::new(spi_bus, cs);
 
     // Configure Sx1262 chip
     let config = sx126x::Config {
@@ -76,7 +87,7 @@ pub async fn send_lorawan_msg(
     let io_busy = AnyInput::new(spi_gpio.busy, Pull::Down);
 
     let iv = GenericSx126xInterfaceVariant::new(io_reset, io_dio1, io_busy, None, None).unwrap();
-    let lora = LoRa::new(Sx126x::new(spi, iv, config), true, Delay)
+    let lora = LoRa::new(Sx126x::new(spi_dev1, iv, config), true, Delay)
         .await
         .unwrap();
     let radio: LorawanRadio<_, _, MAX_TX_POWER> = lora.into();

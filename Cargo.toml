@@ -16,11 +16,11 @@ esp-hal = { version = "0.19.0", features = ["async", "esp32s3", "embedded-hal-02
 esp-println = { version = "0.10.0", features = ["esp32s3", "log"] }
 log = { version = "0.4.21" }
 
-lora-phy = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", features = ["lorawan-radio"]}
-lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", rev="b4b6741152b0bc599574eecff9a7ffc031ba1823", default-features = false, features = ["embassy-time", "default-crypto"]}
+lora-phy = { features = ["lorawan-radio"], version = "3.0.1" }
+lorawan-device = { features = ["embassy-time", "default-crypto"], version = "0.12.2"}
 embassy-executor =  { version = "0.5.0" }
 embassy-time =  { version = "0.3.0" }
-embedded-hal-bus = { version = "0.1.0", features = ["async"] }
+embedded-hal-bus = { version = "0.2.0", features = ["async"] }
 loadcell = "0.2.0"
 esp-hal-embassy = { version = "0.2.0", features = ["esp32s3", "integrated-timers"] }
 esp-wifi = { version = "0.7.1", features = [
@@ -37,6 +37,11 @@ esp-storage = { version = "0.3.0", features = ["esp32s3"] }
 embedded-storage = "0.3.1"
 embassy-sync = "0.6.0"
 static_cell = { version = "2.1.0", features = ["nightly"] }
+#lis2dh12 = "0.7.0"
+#lis2dw12 = "0.1.3"
+embassy-embedded-hal = "0.2.0"
+defmt = "0.3.8"
+#embedded-hal-async = "1.0.0"
 
 [profile.dev]
 # Rust debug is too slow. 
